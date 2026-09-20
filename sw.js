@@ -1,5 +1,5 @@
 /* 오프라인 캐시. 파일을 고치면 VERSION 숫자를 올려주세요 (app.js의 APP_VERSION도 함께). */
-const VERSION = 'yuni-math-2';
+const VERSION = 'yuni-math-3';
 const FILES = ['./', 'index.html', 'style.css', 'content.js', 'app.js', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png', '기획서.md'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(VERSION).then(c => c.addAll(FILES.map(f => encodeURI(f)))).then(() => self.skipWaiting())); });
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== VERSION).map(k => caches.delete(k)))).then(() => self.clients.claim())); });
