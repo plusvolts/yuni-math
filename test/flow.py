@@ -206,7 +206,7 @@ async def run_device(p, name, vw, vh, full):
     st = await state(pg, 'YUNI.state')
     today = await state(pg, "(() => { const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); })()")
     check('MREQ-04', st['done'].get('2-1-1') == today and st['pos'] == {'u': '2-1', 'd': 2, 's': 0}, f'{name} 1일차 완료 → 2일차')
-    check('MREQ-18', st['log'][today]['stars'] <= 20, f"{name} 오늘 별 {st['log'][today]['stars']}")
+    check('MREQ-18', st['log'][today]['stars'] <= 50, f"{name} 오늘 별 {st['log'][today]['stars']}")
     await pg.screenshot(path=f'{SHOT}/{name}-reward.png')
     said = await state(pg, 'window.__said')
     bad = [s for s in said if re.search(r'[0-9+=−□]', s)]
@@ -218,11 +218,17 @@ async def run_device(p, name, vw, vh, full):
     await pg.click('[data-act=home]')
 
     if full:
-        # 같은 날 여러 번 해도 하루 별 20개 이하 (MREQ-18)
+        # 같은 날 여러 번 해도 하루 별 50개 이하 (MREQ-18)
         for d in range(2):
             await pg.click('[data-act=go]'); await play_day(pg, f'{name}-extra{d}'); await pg.click('[data-act=home]')
         st = await state(pg, 'YUNI.state')
-        check('MREQ-18', st['log'][today]['stars'] <= 20, f"하루 3번 해도 별 {st['log'][today]['stars']}개")
+        check('MREQ-18', st['log'][today]['stars'] <= 50, f"하루 3번 해도 별 {st['log'][today]['stars']}개")
+        # 하루 50개에 거의 찼을 때: 문제 별은 47개에서 멈추고 보너스로 딱 50개
+        await pg.evaluate("(() => { const d = new Date(); const k = d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); YUNI.state.log[k].stars = 45; })()")
+        await pg.click('[data-act=go]'); await play_day(pg, f'{name}-cap'); 
+        st = await state(pg, 'YUNI.state')
+        check('MREQ-18', st['log'][today]['stars'] == 50, f"하루 최대 50개에서 멈춤 ({st['log'][today]['stars']}개)")
+        await pg.click('[data-act=home]')
 
         # 복습 (MREQ-08): 틀린 유형의 복습일을 오늘로 바꾸면 복습 단계에 같은 유형이 다른 숫자로 나와요
         types = await pg.evaluate("(() => { const t = Object.keys(YUNI.state.weak); t.forEach(k => YUNI.state.weak[k].due = '2000-01-01'); YUNI.state.reviewPick = null; return t; })()")
@@ -400,7 +406,7 @@ def static_checks():
     check('MREQ-02', re.search(r"VERSION = 'yuni-math-\d+'", sw) and man['name'] == '윤이 수학' and man['start_url'] == './', 'manifest·sw')
     check('MREQ-11', 'getHours' not in app and 'night' not in app.lower(), '밤 시간 잠금 없음')
     check('MREQ-16', "const KEY = 'yuni-math-v1'" in app and 'yuni-english-v1' not in app, '저장 키')
-    check('MREQ-18', 'DAY_STAR_MAX = 20, DAY_BONUS = 3' in app, '별 규칙 상수')
+    check('MREQ-18', 'DAY_STAR_MAX = 50, DAY_BONUS = 3' in app, '별 규칙 상수 (하루 50개)')
     check('MREQ-21', f'v{ver}' in spec and '현재 버전: **v' + ver in spec, f'기획서.md에 v{ver}')
     check('MREQ-34', not re.search(r'남은 시간|초시계|countdown|타이머 표시', app), '타이머·초시계 없음')
     check('MREQ-38', man['theme_color'].lower() == '#22a06b' and '--primary: #22a06b' in open(os.path.join(APP_DIR, 'style.css'), encoding='utf-8').read(), '초록색 테마')

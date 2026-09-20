@@ -1,7 +1,7 @@
 /* 윤이 수학 — 앱 로직 (의존성 없음). 뼈대는 윤이 영어 v1.3.3에서 복사했어요. */
 (() => {
   'use strict';
-  const APP_VERSION = '0.1.0';
+  const APP_VERSION = '0.1.1';
   const C = window.CONTENT;
   const U = C.units;
   const READY = U.filter(u => u.ready);
@@ -608,8 +608,8 @@
     L.acts = buildStep(L.s); L.i = 0;
     stepIntro();
   }
-  // 별: 한 번에 맞히면 1개, 다시 맞히면 0개, 문제당 한 번만, 하루 끝 보너스 3개, 하루치 합계 20개 이하
-  const DAY_STAR_MAX = 20, DAY_BONUS = 3;
+  // 별: 한 번에 맞히면 1개, 다시 맞히면 0개, 문제당 한 번만, 하루 끝 보너스 3개, 하루치(날짜 기준) 합계 50개 이하 (v0.1.1: 20 → 50)
+  const DAY_STAR_MAX = 50, DAY_BONUS = 3;
   function award(attempts) {
     const key = `${L.s}:${L.i}`;
     let n = attempts === 0 ? 1 : 0;
@@ -969,7 +969,7 @@
     render('reward', `<div class="screen"><div class="reward">
       <div class="friends">${Object.keys(C.friends).map(id => friendHtml(id, true)).join('')}</div>
       <div class="bubble">오늘 수학 끝! 정말 잘했어, ${esc(callName())}!<small>내일 또 만나요 👋</small></div>
-      ${L.earned ? `<div class="big-stars">⭐ +${L.earned}</div>` : '<div class="bubble">오늘 별은 다 모았어요! ⭐<small>별은 하루에 20개까지 받아요</small></div>'}
+      ${L.earned ? `<div class="big-stars">⭐ +${L.earned}</div>` : `<div class="bubble">오늘 별은 다 모았어요! ⭐<small>별은 하루에 ${DAY_STAR_MAX}개까지 받아요</small></div>`}
       ${bonus ? `<div class="muted" style="font-weight:800;margin-top:-10px">끝까지 한 보너스 ⭐${bonus} 포함</div>` : ''}
       ${chalMsg ? `<div class="bubble">🏁 ${esc(chalMsg)}</div>` : ''}
       ${newSticker ? `<div class="sticker-new">${un.sticker}</div><div class="bubble">${esc(un.title)} 스티커를 받았어요!</div>` : ''}
