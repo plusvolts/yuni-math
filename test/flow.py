@@ -5,6 +5,7 @@
 - 한국어 음성(TTS)과 음성인식은 가짜(목업)로 바꿔서 빠르게 돌려요.
 - 마지막에 '요구사항 점검'(MREQ)을 출력해요. 모두 OK여야 배포해요.
 사용법:  앱 폴더(index.html 있는 곳)에서 python3 -m http.server 8765  →  다른 창에서 python3 test/flow.py
+        다른 포트: APP_URL=http://localhost:8773/ python3 test/flow.py  (스크린샷 폴더: SHOT_DIR)
 필요: pip install playwright && playwright install chromium
 """
 import asyncio, json, os, re, sys, datetime
@@ -93,9 +94,11 @@ async def answer_frame(pg, n, given, drag=False):
         await pg.click('.marble'); k += 1
     await pg.click('.framewrap [data-act=ok]')
 
+REVEAL_SKIP = []   # 3번 틀린 뒤 "다음 ▶"으로 넘어간 문제 (MREQ-64 점검이 실제로 돌았는지 확인)
 async def play_day(pg, tag, wrong_every=0, reveal_once=False, prev_test=False, expect=None):
-    """하루치를 끝까지 풀어요. wrong_every=N이면 N번째 문제마다 한 번 틀리고, reveal_once면 한 문제는 3번 틀려서 풀이 보기"""
-    seen_prob = 0; revealed = False; prev_done = False; shots = set(); frame_drag_done = False
+    """하루치를 끝까지 풀어요. wrong_every=N이면 N번째 문제마다 한 번 틀리고 다시 맞히기(별 +1 확인),
+    reveal_once면 두 문제를 3번 틀려서 정답 보기: 첫 문제는 정답을 직접 넣고(별 +1), 둘째 문제는 "다음 ▶"으로 넘어가요(별 0) — 공통 64번"""
+    seen_prob = 0; revealed = 0; prev_done = False; shots = set(); frame_drag_done = False
     for _ in range(400):
         scr = await wait_ready(pg)
         if scr == 'reward': return True
@@ -144,8 +147,10 @@ async def play_day(pg, tag, wrong_every=0, reveal_once=False, prev_test=False, e
             prev_done = True
             info = again; key = (info['s'], info['i']); ans = info['answer']; inp = info['input']
         wrongs = 0
-        if reveal_once and not revealed and inp in ('pad', 'frame') and not info['flash']:
-            wrongs = 3; revealed = True
+        if reveal_once and revealed == 0 and inp in ('pad', 'frame') and not info['flash']:
+            wrongs = 3; revealed = 1
+        elif reveal_once and revealed == 1 and (inp in ('pad', 'frame') or len(info['choices'] or []) >= 4):
+            wrongs = 3; revealed = 2
         elif wrong_every and seen_prob % wrong_every == 0:
             wrongs = 1
         tried = []
@@ -163,22 +168,170 @@ async def play_day(pg, tag, wrong_every=0, reveal_once=False, prev_test=False, e
                 check('MREQ-07', len(hint) > 3, '풀이 과정 표시')
         if len(tried) == 3:
             await pg.wait_for_selector('#nextRow:not([hidden]) [data-act=next]', timeout=8000)
-            check('MREQ-07', await pg.locator('#hint').inner_text() != '', '세 번째: 답과 풀이 보여주기')
-            await pg.screenshot(path=f"{SHOT}/{tag}-reveal.png")
-            await pg.click('#nextRow [data-act=next]'); await wait_change(pg, key); continue
+            hint = await pg.locator('#hint').inner_text()
+            check('MREQ-07', hint != '', '세 번째: 답과 풀이 보여주기')
+            check('MREQ-64', f'정답은 {ans}' in hint and '정답을 넣으면 별을 받아요' in hint, f'정답·풀이·안내 표시 ({inp})')
+            filled = await pg.evaluate("""() => ({ q: [...document.querySelectorAll('.qbox')].map(q => q.textContent), d: [...document.querySelectorAll('.abox span')].map(x => x.textContent).join(''),
+                b: document.querySelectorAll('#fz .cell.b').length })""")
+            await pg.wait_for_timeout(750)
+            filled['d'] = await pg.evaluate("[...document.querySelectorAll('.abox span')].map(x => x.textContent).join('')")
+            check('MREQ-64', all(q == '□' for q in filled['q']) and filled['d'] == '' and filled['b'] == 0, f'정답 자동으로 안 채움 ({inp} {filled})')
+            if inp == 'choice':
+                check('MREQ-64', await pg.locator(f'.choice.glow[data-arg="{ans}"]').count() == 1 and await pg.locator('.choice.right').count() == 0, '보기: 정답은 반짝임만, 골라진 상태 아님')
+            await pg.screenshot(path=f"{SHOT}/{tag}-reveal{revealed}.png")
+            s0 = await state(pg, 'YUNI.state.stars')
+            if revealed == 1:
+                # 정답을 본 뒤 한 번 더 틀려도 벌점 없이 그대로, 정답을 넣으면 별 +1
+                if inp == 'pad': await type_pad(pg, wrong_value(ans))
+                else: await answer_frame(pg, int(ans) - 1 if int(ans) > 1 else int(ans) + 1, info['given'])
+                await pg.wait_for_timeout(150)
+                check('MREQ-64', await state(pg, 'YUNI.screen') == 'lesson' and (await pg.evaluate(INFO))['i'] == key[1]
+                      and await state(pg, 'YUNI.state.stars') == s0, '정답 본 뒤 또 틀려도 그 문제에 그대로 (벌점 없음)')
+                if inp == 'pad': await type_pad(pg, ans)
+                else: await answer_frame(pg, int(ans), info['given'])
+                await wait_change(pg, key)
+                check('MREQ-64', await state(pg, 'YUNI.state.stars') == s0 + 1, f'3번 틀린 뒤 정답 넣으면 별 +1 ({inp})')
+                check('MREQ-18', await state(pg, 'YUNI.state.stars') == s0 + 1, '정답 보고 넣어도 별 1개')
+                continue
+            await pg.click('#nextRow [data-act=next]'); await wait_change(pg, key)
+            check('MREQ-64', await state(pg, 'YUNI.state.stars') == s0, f'정답 안 넣고 다음 ▶ → 별 0 ({inp})')
+            REVEAL_SKIP.append(inp)
+            # 넘어간 문제를 ◀ 이전으로 돌아와 맞혀도 별 없음 (문제당 한 번)
+            if await wait_ready(pg) != 'lesson': continue
+            cur = await pg.evaluate(INFO)
+            await pg.click('.topbar [data-act=prev]'); await pg.wait_for_timeout(250)
+            back = await pg.evaluate(INFO)
+            check('MREQ-64', back['sig'] == info['sig'], '◀ 이전으로 넘어간 문제에 돌아옴')
+            if back['input'] == 'pad': await type_pad(pg, back['answer'])
+            elif back['input'] == 'choice': await pg.click(f'[data-act=pick][data-arg="{back["answer"]}"]')
+            else: await answer_frame(pg, int(back['answer']), back['given'])
+            await wait_change(pg, (back['s'], back['i'])); await wait_ready(pg)
+            check('MREQ-64', await state(pg, 'YUNI.state.stars') == s0 and (await pg.evaluate(INFO))['sig'] == cur['sig'], '넘어간 문제는 돌아와 맞혀도 별 없음')
+            check('MREQ-18', await state(pg, 'YUNI.state.stars') == s0, '같은 문제 두 번 별 없음')
+            continue
+        s0 = await state(pg, 'YUNI.state.stars'); day_stars0 = await state(pg, f"(YUNI.state.log[{DAY_JS}(0)] || {{}}).stars || 0")
         if inp == 'choice': await pg.click(f'[data-act=pick][data-arg="{ans}"]')
         elif inp == 'pad': await type_pad(pg, ans)
         elif inp == 'frame':
             await answer_frame(pg, int(ans), info['given'], drag=not frame_drag_done); frame_drag_done = True
         await wait_change(pg, key)
+        # 하루 50개(문제 별 47개)가 찬 뒤에는 별이 안 늘어나니 그 전에만 확인해요
+        if len(tried) == 1 and wrongs == 1 and day_stars0 < 47:
+            s1 = await state(pg, 'YUNI.state.stars')
+            check('MREQ-64', s1 == s0 + 1, f'두 번째 시도에 맞혀도 별 +1 ({inp})')
+            check('MREQ-18', s1 == s0 + 1, '몇 번 만에 맞혀도 별 1개')
     raise Exception('하루가 끝나지 않았어요')
 
-async def gate(pg):
+async def gate(pg, pin='1234'):
+    """아빠 화면 암호 입력 (공통 61번, 기본 1234)"""
     await pg.click('[data-act=parent]')
-    q = await pg.locator('.gate .card div').first.inner_text()
-    a, b = [int(x) for x in re.findall(r'\d+', q)[:2]]
-    await pg.fill('#ans', str(a * b)); await pg.click('[data-act=ok]')
+    await pg.wait_for_selector('.gate #ans')
+    await pg.fill('#ans', pin); await pg.click('[data-act=ok]')
     await pg.wait_for_selector('.parent')
+
+async def ptab(pg, k):
+    await pg.click(f'.ptabs [data-act=ptab][data-arg="{k}"]'); await pg.wait_for_timeout(50)
+
+PTAB_KEYS = ['summary', 'stats', 'reward', 'progress', 'settings', 'manage']
+VISIBLE_PANELS = "[...document.querySelectorAll('.ppanel')].filter(p => !p.hidden && getComputedStyle(p).display !== 'none').map(p => p.dataset.panel)"
+DAY_JS = "(i => { const d = new Date(); d.setDate(d.getDate() - i); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); })"
+
+async def pin_try(pg, pin):
+    """암호 화면에서 pin을 넣고 아빠 화면이 열렸는지 돌려줘요 (안 열리면 암호 화면에 그대로 있어요)"""
+    await pg.fill('#ans', pin); await pg.click('[data-act=ok]'); await pg.wait_for_timeout(120)
+    return await state(pg, 'YUNI.screen') == 'parent'
+
+async def tab_checks(pg, name):
+    """탭 메뉴 (공통 63번): 탭 6개, 보이는 패널은 1개, 누르면 그 패널로. 탭마다 스크린샷"""
+    keys = await pg.evaluate("[...document.querySelectorAll('.ptabs .ptab')].map(b => b.dataset.arg)")
+    check('MREQ-63', keys == PTAB_KEYS, f'{name} 탭 {len(keys)}개')
+    check('MREQ-63', await pg.locator('.ppanel').count() == 6, f'{name} 패널 6개')
+    wide = []
+    for k in PTAB_KEYS:
+        await ptab(pg, k)
+        vis = await pg.evaluate(VISIBLE_PANELS)
+        on = await pg.evaluate("[...document.querySelectorAll('.ptab.on')].map(b => b.dataset.arg)")
+        check('MREQ-63', vis == [k] and on == [k], f'{name} {k} 탭 → 패널 {vis}')
+        sw = await pg.evaluate("document.scrollingElement.scrollWidth - innerWidth")
+        if sw > 1: wide.append(f'{k} {sw}px')
+        await pg.screenshot(path=f'{SHOT}/{name}-parent-tab-{k}.png', full_page=True)
+    check('MREQ-63', not wide, f'{name} 탭 가로 넘침 {wide}' if wide else f'{name} 탭 6개 모두 가로 스크롤 없음')
+
+async def parent_common_checks(pg, name):
+    """아빠 화면 공통 61(암호)·62(통계)·63(탭) 점검. 처음 화면에서 시작해서 처음 화면으로 돌아와요"""
+    # 62 준비: 지난 날짜 기록 넣기 (sec=학습 초, stars=얻은 별, app=앱 켠 초, 수학은 n/ok도 있음)
+    seed = {'1': [600, 12, None], '3': [900, 20, 1500], '10': [300, 5, None], '20': [1200, 30, 1800]}
+    await pg.evaluate("""([seed, dayjs]) => { const day = eval(dayjs); for (const [i, v] of Object.entries(seed)) {
+        const e = { sec: v[0], stars: v[1], n: 7, ok: 5 }; if (v[2] != null) e.app = v[2]; YUNI.state.log[day(+i)] = e; } }""", [seed, DAY_JS])
+    # 61: 기본 1234로 열림, 틀린 암호는 안 열림
+    await pg.click('[data-act=parent]'); await pg.wait_for_selector('.gate #ans')
+    check('MREQ-61', await pg.locator('.gate input#ans[type=password]').count() == 1 and await pg.locator('[data-act=forgot]').count() == 1, f'{name} 암호 화면(가려진 입력, 암호를 잊었어요)')
+    await pg.screenshot(path=f'{SHOT}/{name}-parent-gate.png')
+    check('MREQ-61', not await pin_try(pg, '0000') and await state(pg, 'YUNI.screen') == 'gate', '틀린 암호 0000 → 안 열림')
+    check('MREQ-61', await pin_try(pg, '1234'), '기본 암호 1234 → 열림')
+    check('MREQ-63', await pg.evaluate(VISIBLE_PANELS) == ['summary'], '처음엔 요약 탭')
+    await tab_checks(pg, name)
+    # 62: 통계 탭
+    await ptab(pg, 'stats')
+    days = await pg.evaluate(f"[0,1,3,10,20].map({DAY_JS})")
+    async def row(i):
+        return await pg.locator(f'#statsCard .stat-row[data-date="{days[i]}"]').inner_text()
+    n7 = await pg.locator('#statsCard .stat-row').count()
+    r1, r3 = await row(1), await row(2)
+    check('MREQ-62', n7 == 7, f'최근 7일 {n7}줄')
+    check('MREQ-62', '10분' in r1 and '12개' in r1, f'어제 10분·별 12개 ({r1.replace(chr(10), " ")})')
+    check('MREQ-62', '15분' in r3 and '20개' in r3 and '앱 켠 시간 25분' in r3, f'3일 전 15분·별 20개·앱 25분')
+    check('MREQ-62', await pg.locator(f'#statsCard .stat-row[data-date="{days[3]}"]').count() == 0, '7일 보기엔 10일 전 없음')
+    kv = await pg.locator('#statsCard .kv').inner_text()
+    exp = await pg.evaluate(f"""(() => {{ const day = {DAY_JS}; let m = 0, s = 0; for (let i = 0; i < 7; i++) {{ const l = YUNI.state.log[day(i)] || {{}}; m += Math.round((l.sec||0)/60); s += l.stars||0; }} return [m, s]; }})()""")
+    check('MREQ-62', f'{exp[0]}분' in kv and f'{exp[1]}개' in kv, f'7일 합계 {exp[0]}분·별 {exp[1]}개')
+    await pg.click('#statsCard [data-act=statdays][data-arg="14"]'); await pg.wait_for_timeout(80)
+    n14 = await pg.locator('#statsCard .stat-row').count(); r10 = await row(3)
+    check('MREQ-62', n14 == 14 and '5분' in r10 and '5개' in r10, f'최근 14일 {n14}줄, 10일 전 5분·별 5개')
+    check('MREQ-63', await pg.evaluate(VISIBLE_PANELS) == ['stats'], '기간 버튼(다시 그리기) 뒤에도 통계 탭 유지')
+    await pg.click('#statsCard [data-act=statdays][data-arg="30"]'); await pg.wait_for_timeout(80)
+    n30 = await pg.locator('#statsCard .stat-row').count(); r20 = await row(4)
+    check('MREQ-62', n30 == 30 and '20분' in r20 and '30개' in r20, f'최근 30일 {n30}줄, 20일 전 20분·별 30개')
+    await pg.screenshot(path=f'{SHOT}/{name}-parent-stats30.png', full_page=True)
+    await pg.click('#statsCard [data-act=statdays][data-arg="7"]'); await pg.wait_for_timeout(50)
+    # 63: 버튼을 눌러 화면을 다시 그려도 보던 탭 유지 (보상·별 탭에서 별 +1)
+    await ptab(pg, 'reward')
+    s0 = await state(pg, 'YUNI.state.stars')
+    await pg.click('[data-panel=reward] [data-act=star][data-arg="1"]'); await pg.wait_for_timeout(80)
+    check('MREQ-63', await state(pg, 'YUNI.state.stars') == s0 + 1 and await pg.evaluate(VISIBLE_PANELS) == ['reward'], '별 +1 뒤에도 보상·별 탭 유지')
+    await pg.click('[data-panel=reward] [data-act=star][data-arg="-1"]'); await pg.wait_for_timeout(50)
+    # 61: 설정 탭에서 암호 바꾸기 (두 번 다르게 적으면 안 바뀜)
+    await ptab(pg, 'settings')
+    await pg.fill('#pinNew', '5678'); await pg.fill('#pinNew2', '5679'); await pg.click('[data-act=setpin]'); await pg.wait_for_timeout(80)
+    check('MREQ-61', await state(pg, 'YUNI.state.settings.parentPin') == '1234', '두 번 다르게 적으면 안 바뀜')
+    await pg.fill('#pinNew', '12'); await pg.fill('#pinNew2', '12'); await pg.click('[data-act=setpin]'); await pg.wait_for_timeout(80)
+    check('MREQ-61', await state(pg, 'YUNI.state.settings.parentPin') == '1234', '4자리 미만은 안 바뀜')
+    await pg.fill('#pinNew', '5678'); await pg.fill('#pinNew2', '5678'); await pg.click('[data-act=setpin]'); await pg.wait_for_timeout(80)
+    check('MREQ-61', await state(pg, 'YUNI.state.settings.parentPin') == '5678', '설정 탭에서 5678로 바꿈')
+    check('MREQ-63', await pg.evaluate(VISIBLE_PANELS) == ['settings'], '암호 바꾼 뒤에도 설정 탭 유지')
+    await pg.click('.topbar [data-act=home]')
+    await pg.click('[data-act=parent]'); await pg.wait_for_selector('.gate #ans')
+    check('MREQ-61', not await pin_try(pg, '1234'), '바꾼 뒤 1234 → 안 열림')
+    check('MREQ-61', await pin_try(pg, '5678'), '바꾼 암호 5678 → 열림')
+    check('MREQ-63', await pg.evaluate(VISIBLE_PANELS) == ['summary'], '다시 들어오면 요약 탭')
+    await pg.click('.topbar [data-act=home]')
+    # 61: 암호를 잊었어요 → 두 자리 × 두 자리 곱셈 → 1234로 되돌림
+    await pg.click('[data-act=parent]'); await pg.wait_for_selector('.gate #ans')
+    await pg.click('[data-act=forgot]'); await pg.wait_for_timeout(80)
+    q = await pg.locator('.gate .card').inner_text()
+    m = re.search(r'(\d+)\s*×\s*(\d+)', q)
+    check('MREQ-61', await state(pg, 'YUNI.screen') == 'pinreset' and m and 10 <= int(m.group(1)) <= 99 and 10 <= int(m.group(2)) <= 99, f'암호 되돌리기 문제 {m.group(0) if m else q}')
+    await pg.screenshot(path=f'{SHOT}/{name}-parent-pinreset.png')
+    await pg.fill('#ans', str(int(m.group(1)) * int(m.group(2)) + 1)); await pg.click('[data-act=ok]'); await pg.wait_for_timeout(80)
+    check('MREQ-61', await state(pg, 'YUNI.screen') == 'pinreset' and await state(pg, 'YUNI.state.settings.parentPin') == '5678', '틀린 곱 → 그대로')
+    q = await pg.locator('.gate .card').inner_text(); m = re.search(r'(\d+)\s*×\s*(\d+)', q)
+    await pg.fill('#ans', str(int(m.group(1)) * int(m.group(2)))); await pg.click('[data-act=ok]'); await pg.wait_for_timeout(100)
+    check('MREQ-61', await state(pg, 'YUNI.screen') == 'parent' and await state(pg, 'YUNI.state.settings.parentPin') == '1234'
+          and await pg.evaluate(VISIBLE_PANELS) == ['settings'], '맞히면 1234로 되돌리고 설정 탭으로')
+    await pg.click('.topbar [data-act=home]')
+    await pg.click('[data-act=parent]'); await pg.wait_for_selector('.gate #ans')
+    check('MREQ-61', await pin_try(pg, '1234'), '되돌린 뒤 1234 → 열림')
+    await pg.click('.topbar [data-act=home]')
 
 async def run_device(p, name, vw, vh, full):
     b = await p.chromium.launch()
@@ -202,7 +355,9 @@ async def run_device(p, name, vw, vh, full):
 
     # 하루 흐름 (MREQ-04)
     await pg.click('[data-act=go]')
+    n_skip = len(REVEAL_SKIP)
     await play_day(pg, f'{name}-d1', wrong_every=3, reveal_once=True, prev_test=True)
+    check('MREQ-64', len(REVEAL_SKIP) > n_skip, f'{name} 3번 틀린 뒤 다음 ▶ 점검 {REVEAL_SKIP[n_skip:]}')
     st = await state(pg, 'YUNI.state')
     today = await state(pg, "(() => { const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); })()")
     check('MREQ-04', st['done'].get('2-1-1') == today and st['pos'] == {'u': '2-1', 'd': 2, 's': 0}, f'{name} 1일차 완료 → 2일차')
@@ -280,26 +435,31 @@ async def run_device(p, name, vw, vh, full):
         await pg.click('[data-act=quit]')
 
         # 아빠 화면 (MREQ-10·14·15·16·21·23·36 등)
+        await parent_common_checks(pg, name)
         await gate(pg)
         await pg.screenshot(path=f'{SHOT}/{name}-parent.png', full_page=True)
-        txt = await pg.locator('.parent').inner_text()
-        for rid, words in {'MREQ-10': ['이번 주', '약한 유형'], 'MREQ-14': ['진도 조정', '별 조정', '진도 초기화'], 'MREQ-15': ['받은 보상'],
+        txt = await pg.locator('.parent').text_content()
+        for rid, words in {'MREQ-10': ['이번 주', '약한 유형', '아빠 화면 암호'], 'MREQ-14': ['진도 조정', '별 조정', '진도 초기화'], 'MREQ-15': ['받은 보상'],
                            'MREQ-16': ['백업 파일 저장', '백업 파일 불러오기'], 'MREQ-23': ['새 버전 확인'], 'MREQ-21': ['기획·변경 기록'],
                            'MREQ-30': ['지금 학교 단원'], 'MREQ-32': ['연산 사다리 조정'], 'MREQ-36': ['약한 유형'], 'MREQ-35': ['설명하기 기록']}.items():
             check(rid, all(w in txt for w in words), '아빠 화면: ' + ', '.join(words))
         # 보상 기록 → 진도 초기화해도 별·보상·설정 유지
+        await ptab(pg, 'settings')
         await pg.fill('[data-set=goalText]', '레고 로봇'); await pg.dispatch_event('[data-set=goalText]', 'change')
         await pg.click('[data-act=gave]'); await pg.wait_for_timeout(100)
         before = await state(pg, 'YUNI.state')
+        await ptab(pg, 'progress')
         await pg.click('[data-act=resetprog]'); await pg.click('[data-act=resetprog]'); await pg.wait_for_timeout(100)
         after = await state(pg, 'YUNI.state')
         check('MREQ-14', after['stars'] == before['stars'] and after['rewards'] == before['rewards'] and after['settings']['goalText'] == '레고 로봇'
               and after['pos'] == {'u': '2-1', 'd': 1, 's': 0} and not after['stickers'] and after['ladder']['rung'] == 0, '진도 초기화: 별·보상·설정 유지')
         check('MREQ-15', len(after['rewards']) == 1 and after['rewards'][0]['text'] == '레고 로봇', '보상 기록')
         # 별 조정
+        await ptab(pg, 'reward')
         await pg.click('[data-act=star][data-arg="10"]'); await pg.wait_for_timeout(50)
         check('MREQ-14', await state(pg, 'YUNI.state.stars') == after['stars'] + 10, '별 +10')
         # 지금 학교 단원
+        await ptab(pg, 'progress')
         await pg.select_option('#school', '2-6'); await pg.click('[data-act=school]'); await pg.wait_for_timeout(50)
         check('MREQ-30', (await state(pg, 'YUNI.state.pos')) == {'u': '2-6', 'd': 1, 's': 0}, '학교 단원 → 1일차')
         # 사다리 조정
@@ -308,6 +468,7 @@ async def run_device(p, name, vw, vh, full):
         await pg.select_option('[data-set=ladderPct]', '80'); await pg.wait_for_timeout(50)
         check('MREQ-32', (await state(pg, 'YUNI.state.settings.ladderPct')) == 80, '사다리 기준 조정')
         # 백업 코드 내보내기 → 가져오기
+        await ptab(pg, 'manage')
         await pg.click('[data-act=export]'); code = await pg.input_value('#backup')
         await pg.evaluate("YUNI.state.stars = 1")
         await pg.fill('#backup', code); await pg.click('[data-act=import]'); await pg.wait_for_timeout(100)
@@ -344,6 +505,20 @@ async def run_device(p, name, vw, vh, full):
         eng = await state(pg, "localStorage.getItem('yuni-english-v1')")
         check('MREQ-16', after['stars'] == before['stars'] and after['pos'] == before['pos'], '다시 열어도 진도·별 유지')
         check('MREQ-16', json.loads(eng).get('marker') == 'english' and (await state(pg, 'YUNI.KEY')) == 'yuni-math-v1', '저장 키 yuni-math-v1, 영어 앱 데이터 그대로')
+
+    if not full:
+        await pg.click('[data-act=parent]'); await pg.wait_for_selector('.gate #ans')
+        await pg.screenshot(path=f'{SHOT}/{name}-parent-gate.png')
+        check('MREQ-61', not await pin_try(pg, '9999') and await pin_try(pg, '1234'), f'{name} 틀린 암호 안 열림, 1234 열림')
+        await tab_checks(pg, name)
+        # 폰: 설정 탭에서 다시 그린 뒤(암호 바꾸기)에도 켜진 탭 버튼이 화면 안에 보여요 (탭 바 가로 스크롤)
+        await ptab(pg, 'settings')
+        await pg.fill('#pinNew', '5678'); await pg.fill('#pinNew2', '5678'); await pg.click('[data-act=setpin]'); await pg.wait_for_timeout(400)
+        r = await pg.evaluate("(() => { const b = document.querySelector('.ptab.on'); const r = b.getBoundingClientRect(); return {k: b.dataset.arg, l: r.left, r: r.right, t: r.top, b: r.bottom, w: innerWidth, h: innerHeight}; })()")
+        check('MREQ-63', r['k'] == 'settings' and r['l'] >= 0 and r['r'] <= r['w'] + 1 and r['t'] >= 0 and r['b'] <= r['h'],
+              f"{name} 다시 그린 뒤 켜진 탭({r['k']}) 화면 안 {r['l']:.0f}~{r['r']:.0f}/{r['w']}")
+        await pg.fill('#pinNew', '1234'); await pg.fill('#pinNew2', '1234'); await pg.click('[data-act=setpin]'); await pg.wait_for_timeout(100)
+        await pg.click('.topbar [data-act=home]')
 
     # 숫자 패드 버튼 크기 (MREQ-33)
     await pg.evaluate("YUNI.state.ladder.rung = 9")
@@ -407,6 +582,8 @@ def static_checks():
     check('MREQ-11', 'getHours' not in app and 'night' not in app.lower(), '밤 시간 잠금 없음')
     check('MREQ-16', "const KEY = 'yuni-math-v1'" in app and 'yuni-english-v1' not in app, '저장 키')
     check('MREQ-18', 'DAY_STAR_MAX = 50, DAY_BONUS = 3' in app, '별 규칙 상수 (하루 50개)')
+    check('MREQ-64', 'function award(solved)' in app and 'award(false)' in app and 'award(0)' not in app and 'award(3)' not in app, 'award(solved) 코드')
+    check('MREQ-61', "parentPin: '1234'" in app and "const DEFAULT_PIN = '1234'" in app, '기본 암호 1234 (settings.parentPin)')
     check('MREQ-21', f'v{ver}' in spec and '현재 버전: **v' + ver in spec, f'기획서.md에 v{ver}')
     check('MREQ-34', not re.search(r'남은 시간|초시계|countdown|타이머 표시', app), '타이머·초시계 없음')
     check('MREQ-38', man['theme_color'].lower() == '#22a06b' and '--primary: #22a06b' in open(os.path.join(APP_DIR, 'style.css'), encoding='utf-8').read(), '초록색 테마')

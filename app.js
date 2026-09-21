@@ -1,7 +1,7 @@
 /* 윤이 수학 — 앱 로직 (의존성 없음). 뼈대는 윤이 영어 v1.3.3에서 복사했어요. */
 (() => {
   'use strict';
-  const APP_VERSION = '0.2.1';
+  const APP_VERSION = '0.3.1';
   const C = window.CONTENT;
   const U = C.units;
   const READY = U.filter(u => u.ready);
@@ -19,7 +19,7 @@
   /* ================= 저장소 ================= */
   function defaults() {
     return {
-      settings: { robotName: '셈봇', childName: '윤이', dailyLimit: 20, koVoice: '', koRate: 0.9, goalStars: 50, goalText: '아빠와 약속한 선물', explainSave: true, ladderDays: 3, ladderPct: 90 },
+      settings: { parentPin: '1234', robotName: '셈봇', childName: '윤이', dailyLimit: 20, koVoice: '', koRate: 0.9, goalStars: 50, goalText: '아빠와 약속한 선물', explainSave: true, ladderDays: 3, ladderPct: 90 },
       pos: { u: '2-1', d: 1, s: 0 }, done: {}, stars: 0, goalBase: 0,
       weak: {}, stats: {}, days: [], log: {}, stickers: {}, override: '', rewards: [],
       ladder: { rung: 0, streak: 0, lastDate: '', hist: [], badges: {} },
@@ -613,11 +613,12 @@
     L.acts = buildStep(L.s); L.i = 0;
     stepIntro();
   }
-  // 별: 한 번에 맞히면 1개, 다시 맞히면 0개, 문제당 한 번만, 하루 끝 보너스 3개, 하루치(날짜 기준) 합계 50개 이하 (v0.1.1: 20 → 50)
+  // 별 (공통 64번, v0.3.1): 몇 번째 시도든 윤이가 정답을 넣으면 1개(solved=true), 못 맞히고 "다음 ▶"으로 넘어가면 0개(solved=false).
+  // 문제당 한 번만, 하루 끝 보너스 3개, 하루치(날짜 기준) 합계 50개 이하 (v0.1.1: 20 → 50)
   const DAY_STAR_MAX = 50, DAY_BONUS = 3;
-  function award(attempts) {
+  function award(solved) {
     const key = `${L.s}:${L.i}`;
-    let n = attempts === 0 ? 1 : 0;
+    let n = solved ? 1 : 0;
     if (L.awarded[key] || todayLog().stars >= DAY_STAR_MAX - DAY_BONUS) n = 0; // 이전 버튼으로 다시 풀어도 별은 한 번만
     L.awarded[key] = 1;
     if (n) {
@@ -789,16 +790,18 @@
     // 맞았을 때
     const right_ = async () => {
       att.done = true; const my = actToken; ding();
-      const n = award(att.n); flash(n ? '⭐' : '👍');
+      const n = award(true); flash(n ? '⭐' : '👍');
       if (!a.greet) record(a, att.n === 0);
       const hint = document.getElementById('hint'); if (hint) { hint.hidden = true; }
+      const nr = document.getElementById('nextRow'); if (nr) nr.hidden = true;
       document.querySelectorAll('.qbox').forEach(q => { q.textContent = pr.answer; q.classList.add('ok'); });
       let msg = praise();
       if (pr.eunhoo != null) msg += pr.eunhoo === pr.answer ? ' 은후도 맞았네!' : ` 은후는 ${sayGuess(pr)} 했지만, ${S.settings.childName}${josa(S.settings.childName, '이', '가')} 맞았어!`;
       const ansSay = pr.expr ? pr.expr.replace('□', pr.answer) : pr.storyExpr ? pr.storyExpr.replace('□', pr.answer) : `${pr.answer}${pr.unit || ''}`;
       hush(); await ko(`${msg} ${ansSay}`); await sleep(350); if (my === actToken) nextAct();
     };
-    // 틀렸을 때: 힌트 1 → 풀이 과정 → 답 보여주고 넘어가기 ("땡"·빨간 X 없음)
+    // 틀렸을 때: 힌트 1 → 풀이 과정 → 정답·풀이 보여주기 ("땡"·빨간 X 없음)
+    // 공통 64번: 정답을 보여줘도 빈칸·보기·구슬·패드는 채우지 않아요. 윤이가 직접 넣으면 별 1개, "다음 ▶"으로 넘어가면 0개
     const wrong_ = async () => {
       const my = actToken; if (!a.greet && att.n === 0) record(a, false);
       att.n++; hush();
@@ -812,15 +815,17 @@
         hint.innerHTML = `🪜 ${pr.steps.map(esc).join('<br>')}`;
         const vb = document.getElementById('visbox'); if (vb && vb.hidden && pr.vis) vb.hidden = false;
         await ko(`같이 풀어 보자. ${pr.steps.join(' ')}`);
-      } else {
-        att.done = true; award(3); flash('👍');
-        hint.innerHTML = `✨ 정답은 <b>${esc(pr.answer)}</b><br>${pr.steps.map(esc).join('<br>')}`;
-        document.querySelectorAll('.qbox').forEach(q => { q.textContent = pr.answer; q.classList.add('ok'); });
+      } else if (att.n === 3) {
+        hint.innerHTML = `✨ 정답은 <b>${esc(pr.answer)}</b><br>${pr.steps.map(esc).join('<br>')}<br>⭐ 정답을 넣으면 별을 받아요`;
         document.querySelectorAll('.choice').forEach(c => { if (c.dataset.arg === String(pr.answer)) c.classList.add('glow'); });
-        if (pr.input === 'frame') fillTo(pr.answer);
-        if (pr.input === 'pad') { typed = String(pr.answer); showTyped(); }
+        if (pr.input === 'frame') fillTo(0);
+        if (pr.input === 'pad') { typed = ''; showTyped(); }
         document.getElementById('nextRow').hidden = false;
-        await ko(`${LINES.showAnswer || '괜찮아!'} 정답은 ${pr.answer}${pr.unit ? pr.unit : ''}. 다음에 또 해보자!`);
+        await ko(`${LINES.showAnswer || '괜찮아!'} 정답은 ${pr.answer}${pr.unit ? pr.unit : ''}. 정답을 넣으면 별을 받아요!`);
+      } else {
+        // 정답을 보여준 뒤에 또 틀려도 괜찮아요 (벌점 없음)
+        if (pr.input === 'frame') fillTo(0);
+        await ko(`괜찮아, 천천히 해 보자. 정답은 ${pr.answer}${pr.unit ? pr.unit : ''}.`);
       }
       if (my !== actToken) return;
     };
@@ -833,7 +838,7 @@
     const handlers = {
       ...baseHandlers(),
       play: () => { hush(); sayQ(); },
-      next: nextAct,
+      next: () => { if (!att.done) { att.done = true; award(false); } nextAct(); },
       helper: (x, btn) => { const vb = document.getElementById('visbox'); vb.hidden = false; btn.remove(); },
       pick: (arg, btn) => { if (att.done || btn.classList.contains('wrong')) return; if (String(arg) === String(pr.answer)) { btn.classList.add('right'); check(arg); } else { btn.classList.add('wrong'); check(arg); } },
       key: k => { if (att.done) return; const len = String(pr.answer).length; if (typed.length >= len) return; typed += k; showTyped(); },
@@ -898,7 +903,7 @@
     const finish = async (said, self) => {
       if (closed) return; closed = true; const my = actToken;
       const ok = said.length ? koMatch(said, ex.keywords) : !!self;
-      const n = award(0); flash(n ? '⭐' : '👍'); ding();
+      const n = award(true); flash(n ? '⭐' : '👍'); ding();
       if (S.settings.explainSave !== false && S.settings.explainSave !== 'false') { S.explains.unshift({ date: today(), who: f.name, q: ex.q, said: said[0] || (self ? '(말했어요 버튼)' : ''), ok }); S.explains = S.explains.slice(0, 14); save(); }
       document.getElementById('model').hidden = false;
       document.getElementById('nextRow').hidden = false;
@@ -991,16 +996,94 @@
   }
 
   /* ================= 아빠 화면 ================= */
+  /* ================= 아빠 화면 공통: 암호(61)·통계(62)·탭(63) — 세 앱 같은 코드 (plan/0_COMMON_spec.md 5-1) ================= */
+  const DEFAULT_PIN = '1234';
+  const parentPin = () => String(S.settings.parentPin || DEFAULT_PIN);
+  const PARENT_SCREENS = ['gate', 'pinreset', 'parent', 'rewardadmin', 'spec'];
+  // 앱을 켜 둔 시간(아빠 화면 제외) — 통계용. 하루 시간 제한은 계속 sec(학습 화면)만 써요
+  setInterval(() => { if (!document.hidden && screen && !PARENT_SCREENS.includes(screen)) { const l = todayLog(); l.app = (l.app || 0) + 10; save(); } }, 10000);
+  const gateFocus = () => setTimeout(() => { const i = document.getElementById('ans'); if (i) { i.focus(); i.addEventListener('keydown', e => { if (e.key === 'Enter') H.ok(); }); } }, 50);
   function gateScreen(next) {
-    const a = 3 + Math.floor(Math.random() * 7), b = 3 + Math.floor(Math.random() * 7);
     render('gate', `<div class="screen"><div class="topbar"><button class="icon-btn" data-act="home">🏠</button></div>
-      <div class="gate"><div class="card"><b>어른 확인</b><div style="font-size:40px;font-weight:900">${a} × ${b} = ?</div>
-      <input id="ans" inputmode="numeric" autocomplete="off"><button class="btn primary" data-act="ok">확인</button></div></div></div>`, {
+      <div class="gate"><div class="card"><b>🔒 아빠 화면 암호</b><p class="muted">암호를 입력하세요</p>
+      <input id="ans" class="pin" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="8" autocomplete="off" aria-label="암호">
+      <button class="btn primary" data-act="ok">확인</button>
+      <button class="btn small" data-act="forgot">암호를 잊었어요</button></div></div></div>`, {
       home: homeScreen,
-      ok: () => { if (+document.getElementById('ans').value === a * b) next(); else { toast('다시 계산해 보세요'); gateScreen(next); } },
+      ok: () => {
+        const i = document.getElementById('ans');
+        if (i && i.value.trim() && i.value.trim() === parentPin()) { pTab = 'summary'; const t = document.getElementById('toast'); if (t) t.classList.remove('show'); next(); }
+        else { toast('암호가 달라요'); if (i) { i.value = ''; i.focus(); } }
+      },
+      forgot: () => pinResetScreen(next),
     });
-    setTimeout(() => { const i = document.getElementById('ans'); if (i) { i.focus(); i.addEventListener('keydown', e => { if (e.key === 'Enter') H.ok(); }); } }, 50);
+    gateFocus();
   }
+  function pinResetScreen(next) {
+    const a = 12 + Math.floor(Math.random() * 28), b = 12 + Math.floor(Math.random() * 18);
+    render('pinreset', `<div class="screen"><div class="topbar"><button class="icon-btn" data-act="home">🏠</button></div>
+      <div class="gate"><div class="card"><b>암호 되돌리기 (어른 확인)</b><p class="muted">맞히면 암호가 ${DEFAULT_PIN}로 돌아가요</p>
+      <div style="font-size:40px;font-weight:900">${a} × ${b} = ?</div>
+      <input id="ans" inputmode="numeric" autocomplete="off"><button class="btn primary" data-act="ok">확인</button>
+      <button class="btn small" data-act="back">암호 입력으로</button></div></div></div>`, {
+      home: homeScreen,
+      back: () => gateScreen(next),
+      ok: () => {
+        if (+document.getElementById('ans').value === a * b) { S.settings.parentPin = DEFAULT_PIN; save(); pTab = 'settings'; next(); toast(`암호를 ${DEFAULT_PIN}로 되돌렸어요. 새 암호로 바꿔 주세요`); }
+        else { toast('다시 계산해 보세요'); pinResetScreen(next); }
+      },
+    });
+    gateFocus();
+  }
+  const PTABS = [['summary', '📊', '요약'], ['stats', '📈', '통계'], ['reward', '🎁', '보상·별'], ['progress', '📚', '학습·진도'], ['settings', '⚙️', '설정'], ['manage', '🛠️', '백업·업데이트']];
+  let pTab = 'summary';
+  const ptabBar = () => `<nav class="ptabs" role="tablist" aria-label="아빠 화면 메뉴">${PTABS.map(([k, i, n]) => `<button class="ptab${pTab === k ? ' on' : ''}" role="tab" aria-selected="${pTab === k}" data-act="ptab" data-arg="${k}"><span aria-hidden="true">${i}</span>${n}</button>`).join('')}</nav>`;
+  const ptabPanel = (k, html) => `<section class="ppanel" role="tabpanel" data-panel="${k}"${pTab === k ? '' : ' hidden'}>${html}</section>`;
+  function ptabSwitch(k) {
+    if (!PTABS.some(t => t[0] === k)) return; pTab = k;
+    document.querySelectorAll('.ptab').forEach(b => { const on = b.dataset.arg === k; b.classList.toggle('on', on); b.setAttribute('aria-selected', on ? 'true' : 'false'); });
+    document.querySelectorAll('.ppanel').forEach(p => { p.hidden = p.dataset.panel !== k; });
+    window.scrollTo(0, 0); ptabReveal(true);
+  }
+  // 폰에서 켜진 탭이 탭 바 밖으로 밀리지 않게
+  function ptabReveal(smooth) { const on = document.querySelector('.ptab.on'); if (on && on.scrollIntoView) on.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: smooth ? 'smooth' : 'auto' }); }
+  let statDays = 7;
+  const WD = ['일', '월', '화', '수', '목', '금', '토'];
+  function statRows(n) {
+    const out = [];
+    for (let i = 0; i < n; i++) { const d = addDays(-i); const l = S.log[d] || {}; out.push({ d, min: Math.round((l.sec || 0) / 60), app: l.app != null ? Math.round(l.app / 60) : null, stars: l.stars || 0 }); }
+    return out;
+  }
+  function statsCard() {
+    const rows = statRows(statDays); const act = rows.filter(r => r.min > 0 || r.stars > 0); const td = today();
+    const totMin = rows.reduce((s, r) => s + r.min, 0), totStar = rows.reduce((s, r) => s + r.stars, 0), maxStar = Math.max(0, ...rows.map(r => r.stars));
+    const avg = act.length ? Math.round(totMin / act.length) : 0;
+    const maxMin = Math.max(Number(S.settings.dailyLimit) || 20, ...rows.map(r => r.min), 1);
+    const dl = d => { const x = new Date(d + 'T12:00:00'); return `${x.getMonth() + 1}/${x.getDate()} (${WD[x.getDay()]})`; };
+    return `<div class="card" id="statsCard"><h3>📈 날짜별 학습 시간·얻은 별</h3>
+      <div class="row stat-range">${[7, 14, 30].map(n => `<button class="btn small${statDays === n ? ' primary' : ''}" data-act="statdays" data-arg="${n}">최근 ${n}일</button>`).join('')}</div>
+      <div class="kv" style="margin-top:12px"><div>학습한 날<b>${act.length}일</b></div><div>총 학습 시간<b>${totMin}분</b></div><div>하루 평균<b>${avg}분</b></div><div>얻은 별<b>${totStar}개</b></div><div>하루 최고 별<b>${maxStar}개</b></div></div>
+      <ul class="stat-list">${rows.map(r => `<li class="stat-row${r.d === td ? ' today' : ''}${r.min || r.stars ? '' : ' empty'}" data-date="${r.d}"><span class="stat-date">${dl(r.d)}${r.d === td ? ' · 오늘' : ''}</span>
+        <div class="stat-bars"><div class="stat-bar min"><i style="width:${Math.min(100, Math.round(r.min / maxMin * 100))}%"></i><b>⏱️ ${r.min}분</b>${r.app != null && r.app > r.min ? `<small>앱 켠 시간 ${r.app}분</small>` : ''}</div>
+        <div class="stat-bar star"><i style="width:${Math.min(100, Math.round(r.stars / DAY_STAR_MAX * 100))}%"></i><b>⭐ ${r.stars}개</b></div></div></li>`).join('')}</ul>
+      <p class="muted">학습 시간은 문제 푸는 화면에 있던 시간이에요 (하루 시간 제한 ${esc(S.settings.dailyLimit)}분과 같은 기준). “앱 켠 시간”은 아빠 화면을 뺀 전체 시간이에요 (이 버전부터 기록). 별은 그날 문제와 하루 끝 보너스로 얻은 별이에요 (하루 최대 ${DAY_STAR_MAX}개, 아빠가 조정한 별은 빼요).</p></div>`;
+  }
+  function pinCard() {
+    const isDef = parentPin() === DEFAULT_PIN;
+    return `<div class="card" id="pinCard"><h3>🔒 아빠 화면 암호</h3>
+      <p>${isDef ? `⚠️ 지금은 기본 암호(<b>${DEFAULT_PIN}</b>)예요. 윤이가 모르는 암호로 바꿔 주세요.` : '✅ 새 암호가 설정되어 있어요.'}</p>
+      <div class="form"><label>새 암호 (숫자 4~8자리)<input id="pinNew" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="8" autocomplete="new-password"></label>
+        <label>새 암호 한 번 더<input id="pinNew2" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="8" autocomplete="new-password"></label></div>
+      <div class="row" style="margin-top:10px;flex-wrap:wrap"><button class="btn small primary" data-act="setpin">암호 바꾸기</button></div>
+      <p class="muted">암호를 잊으면 암호 화면의 “암호를 잊었어요”에서 어른용 곱셈 문제를 풀어 ${DEFAULT_PIN}로 되돌릴 수 있어요. 전체 초기화를 해도 ${DEFAULT_PIN}로 돌아가요.</p></div>`;
+  }
+  function setPin() {
+    const a = ((document.getElementById('pinNew') || {}).value || '').trim(), b = ((document.getElementById('pinNew2') || {}).value || '').trim();
+    if (!/^\d{4,8}$/.test(a)) return toast('숫자 4~8자리로 적어주세요');
+    if (a !== b) return toast('두 번 적은 암호가 달라요');
+    S.settings.parentPin = a; save(); parentScreen(); toast('암호를 바꿨어요');
+  }
+  const parentCommonHandlers = () => ({ ptab: k => ptabSwitch(k), statdays: n => { statDays = +n || 7; parentScreen(); }, setpin: setPin });
   function restore(txt) {
     txt = String(txt || '').trim(); let o = null;
     try { o = JSON.parse(txt); } catch (e) { try { o = JSON.parse(decodeURIComponent(escape(atob(txt)))); } catch (e2) { o = null; } }
@@ -1100,10 +1183,8 @@
     const LD = S.ladder;
     render('parent', `<div class="screen"><div class="parent">
       <div class="topbar"><button class="icon-btn" data-act="home">🏠</button><h2 class="title">아빠 화면</h2><div class="spacer"></div><button class="btn small" data-act="rewardadmin">🎁 보상</button><button class="btn small" data-act="spec">📋 기획·변경 기록</button><span class="muted">v${APP_VERSION}</span></div>
-      <div class="card"><h3>🎁 받은 보상 관리</h3>
-        <p>받은 보상 <b>${rwCount().n}개</b> · 아직 안 쓴 보상 <b>${rwCount().left}개</b> · 사용완료 ${rwCount().u}개</p>
-        <button class="btn primary" data-act="rewardadmin">🎁 보상 목록 · 사용완료 체크</button>
-      </div>
+      ${ptabBar()}
+      ${ptabPanel('summary', `
       <div class="card"><h3>이번 주 (최근 7일)</h3><div class="kv">
         <div>학습한 날<b>${days7}일</b></div><div>푼 문제<b>${n7}개</b></div><div>한 번에 맞힘<b>${n7 ? Math.round(ok7 / n7 * 100) : 0}%</b></div><div>오늘 사용<b>${min}분</b></div><div>연속<b>${streak()}일</b></div>
       </div></div>
@@ -1113,12 +1194,26 @@
       <div class="card"><h3>전체</h3><div class="kv">
         <div>누적 학습일<b>${S.days.length}일</b></div><div>별<b>${S.stars}개</b></div><div>스티커<b>${Object.keys(S.stickers).length} / ${U.length}</b></div><div>연산 사다리<b>${LD.rung + 1}칸</b></div>
       </div></div>
-      <div class="card"><h3>앱 업데이트</h3>
-        <p>이 기기의 앱: <b>v${APP_VERSION}</b> <span id="verInfo" class="muted">${latestVer ? (isNewer(latestVer, APP_VERSION) ? `· 새 버전 v${latestVer}이 있어요!` : '· 최신 버전이에요') : ''}</span></p>
-        <div class="row" style="flex-wrap:wrap"><button class="btn small" data-act="checkver">🔄 새 버전 확인</button>
-          <button class="btn small primary" data-act="doupdate" id="updBtn"${latestVer && isNewer(latestVer, APP_VERSION) ? '' : ' hidden'}>⬇️ 지금 업데이트</button></div>
-        <p class="muted">업데이트해도 진도·별·보상·설정은 그대로 남아요. 인터넷이 연결돼 있어야 해요.</p>
+      <div class="card"><h3>🗣️ 설명하기 기록 (최근 14개)</h3>
+        ${S.explains.length ? `<ol class="list">${S.explains.map(x => `<li>${esc(x.date)} ${esc(x.who)}: “${esc(x.q)}” → <b>${esc(x.said || '(들리지 않음)')}</b>${x.ok ? ' 👍' : ''}</li>`).join('')}</ol>` : '<p class="muted">아직 없어요. 설명하기 단계에서 윤이가 말한 내용이 글자로 남아요.</p>'}
+        <p class="muted">글자 기록은 이 태블릿 안에만 저장돼요. 목소리 녹음 저장은 v0.4에서 추가해요.</p>
       </div>
+      `)}
+      ${ptabPanel('stats', `
+      ${statsCard()}
+      `)}
+      ${ptabPanel('reward', `
+      <div class="card"><h3>🎁 받은 보상 관리</h3>
+        <p>받은 보상 <b>${rwCount().n}개</b> · 아직 안 쓴 보상 <b>${rwCount().left}개</b> · 사용완료 ${rwCount().u}개</p>
+        <button class="btn primary" data-act="rewardadmin">🎁 보상 목록 · 사용완료 체크</button>
+      </div>
+      <div class="card"><h3>별 조정</h3>
+        <p>지금 별: <b style="font-size:24px">${S.stars}개</b> <span class="muted">(현재 목표에 모은 별 ${Math.max(0, S.stars - S.goalBase)}개 · 오늘 ${todayLog().stars}개 / 하루 최대 ${DAY_STAR_MAX}개)</span></p>
+        <div class="row" style="flex-wrap:wrap"><button class="btn small" data-act="star" data-arg="-10">−10</button><button class="btn small" data-act="star" data-arg="-1">−1</button><button class="btn small" data-act="star" data-arg="1">+1</button><button class="btn small" data-act="star" data-arg="10">+10</button></div>
+        <div class="code-row" style="margin-top:10px"><input id="starSet" type="number" min="0" placeholder="개수"><button class="btn small primary" data-act="starset">이 개수로 맞추기</button></div>
+      </div>
+      `)}
+      ${ptabPanel('progress', `
       <div class="card"><h3>🏫 지금 학교 단원</h3>
         <div class="form"><label>학교에서 배우는 단원<select id="school">${READY.map(x => `<option value="${x.id}"${S.pos.u === x.id ? ' selected' : ''}>${esc(unitLabel(x))}</option>`).join('')}</select></label></div>
         <div class="row" style="margin-top:10px"><button class="btn small primary" data-act="school">이 단원 1일차부터 시작</button></div>
@@ -1146,24 +1241,8 @@
         <p class="muted">반짝 연산은 하루 5문제라서 90%는 5문제를 모두 한 번에 맞혀야 해요. 너무 느리게 올라가면 80%로 바꿔 주세요.</p>
         ${LD.hist.length ? `<p class="muted">최근: ${LD.hist.slice(-7).map(h => `${h.date.slice(5)} ${h.rung + 1}칸 ${h.pct}%`).join(' · ')}</p>` : ''}
       </div>
-      <div class="card"><h3>별 조정</h3>
-        <p>지금 별: <b style="font-size:24px">${S.stars}개</b> <span class="muted">(현재 목표에 모은 별 ${Math.max(0, S.stars - S.goalBase)}개 · 오늘 ${todayLog().stars}개 / 하루 최대 ${DAY_STAR_MAX}개)</span></p>
-        <div class="row" style="flex-wrap:wrap"><button class="btn small" data-act="star" data-arg="-10">−10</button><button class="btn small" data-act="star" data-arg="-1">−1</button><button class="btn small" data-act="star" data-arg="1">+1</button><button class="btn small" data-act="star" data-arg="10">+10</button></div>
-        <div class="code-row" style="margin-top:10px"><input id="starSet" type="number" min="0" placeholder="개수"><button class="btn small primary" data-act="starset">이 개수로 맞추기</button></div>
-      </div>
-      <div class="card"><h3>🗣️ 설명하기 기록 (최근 14개)</h3>
-        ${S.explains.length ? `<ol class="list">${S.explains.map(x => `<li>${esc(x.date)} ${esc(x.who)}: “${esc(x.q)}” → <b>${esc(x.said || '(들리지 않음)')}</b>${x.ok ? ' 👍' : ''}</li>`).join('')}</ol>` : '<p class="muted">아직 없어요. 설명하기 단계에서 윤이가 말한 내용이 글자로 남아요.</p>'}
-        <p class="muted">글자 기록은 이 태블릿 안에만 저장돼요. 목소리 녹음 저장은 v0.4에서 추가해요.</p>
-      </div>
-      <div class="card"><h3>진도 옮기기 (기기끼리 연동이 안 될 때)</h3>
-        <p>이 기기의 현재 진도 코드: <b style="font-size:24px">${code}</b> <span class="muted">(단원-일차-단계)</span></p>
-        <div class="code-row"><input id="pcode" placeholder="예: 6-3-1"><button class="btn small primary" data-act="setpos">이 진도로 맞추기</button></div>
-        <p class="muted">별·스티커·복습 기록까지 모두 옮기려면 아래 백업 코드를 복사해 다른 기기의 같은 칸에 붙여넣고 “가져오기”를 누르세요.</p>
-        <textarea id="backup" placeholder="백업 코드"></textarea>
-        <div class="row" style="margin-top:8px;flex-wrap:wrap"><button class="btn small" data-act="export">내보내기(복사)</button><button class="btn small" data-act="import">가져오기</button>
-          <button class="btn small" data-act="savefile">💾 백업 파일 저장</button><label class="btn small" style="cursor:pointer">📂 백업 파일 불러오기<input type="file" id="loadFile" accept=".json,application/json,text/plain" hidden></label></div>
-        <p class="muted">앱을 지웠다 다시 설치하기 전에는 “백업 파일 저장”을 꼭 눌러두세요.</p>
-      </div>
+      `)}
+      ${ptabPanel('settings', `
       <div class="card"><h3>설정</h3><div class="form">
         <label>아이 이름<input data-set="childName" value="${esc(st.childName)}"></label>
         <label>로봇 친구 이름<input data-set="robotName" value="${esc(st.robotName)}"></label>
@@ -1181,13 +1260,33 @@
         <button class="btn small" data-act="gave">🎁 보상 줬어요 (목표 새로 시작)</button>
         <button class="btn small" data-act="reset">전체 초기화 (별·보상·설정까지)</button>
       </div></div>
+      ${pinCard()}
+      `)}
+      ${ptabPanel('manage', `
+      <div class="card"><h3>앱 업데이트</h3>
+        <p>이 기기의 앱: <b>v${APP_VERSION}</b> <span id="verInfo" class="muted">${latestVer ? (isNewer(latestVer, APP_VERSION) ? `· 새 버전 v${latestVer}이 있어요!` : '· 최신 버전이에요') : ''}</span></p>
+        <div class="row" style="flex-wrap:wrap"><button class="btn small" data-act="checkver">🔄 새 버전 확인</button>
+          <button class="btn small primary" data-act="doupdate" id="updBtn"${latestVer && isNewer(latestVer, APP_VERSION) ? '' : ' hidden'}>⬇️ 지금 업데이트</button></div>
+        <p class="muted">업데이트해도 진도·별·보상·설정은 그대로 남아요. 인터넷이 연결돼 있어야 해요.</p>
+      </div>
+      <div class="card"><h3>진도 옮기기 (기기끼리 연동이 안 될 때)</h3>
+        <p>이 기기의 현재 진도 코드: <b style="font-size:24px">${code}</b> <span class="muted">(단원-일차-단계)</span></p>
+        <div class="code-row"><input id="pcode" placeholder="예: 6-3-1"><button class="btn small primary" data-act="setpos">이 진도로 맞추기</button></div>
+        <p class="muted">별·스티커·복습 기록까지 모두 옮기려면 아래 백업 코드를 복사해 다른 기기의 같은 칸에 붙여넣고 “가져오기”를 누르세요.</p>
+        <textarea id="backup" placeholder="백업 코드"></textarea>
+        <div class="row" style="margin-top:8px;flex-wrap:wrap"><button class="btn small" data-act="export">내보내기(복사)</button><button class="btn small" data-act="import">가져오기</button>
+          <button class="btn small" data-act="savefile">💾 백업 파일 저장</button><label class="btn small" style="cursor:pointer">📂 백업 파일 불러오기<input type="file" id="loadFile" accept=".json,application/json,text/plain" hidden></label></div>
+        <p class="muted">앱을 지웠다 다시 설치하기 전에는 “백업 파일 저장”을 꼭 눌러두세요.</p>
+      </div>
       <div class="card"><h3>안내</h3><ul class="list">
         <li>단원·문제 구성·이야기 문제 문장은 <b>content.js</b> 파일에서 고쳐요. 고친 뒤 <b>sw.js</b>의 VERSION과 <b>app.js</b>의 APP_VERSION을 올리면 설치된 앱에 반영돼요.</li>
         <li>한국어가 잘 안 들리면: 태블릿 <b>설정 → 일반 → 글자 읽어주기(TTS) → 기본 엔진</b>을 <b>Google 음성 인식 및 합성</b>으로 바꾸고, 엔진 설정에서 <b>한국어 음성 데이터(고품질)</b>를 설치한 뒤 앱을 다시 켜세요.</li>
         <li>윤이 영어 앱과 진도·별·보상·시간 제한이 모두 따로예요 (저장 키 yuni-math-v1).</li>
         <li>음성인식(설명하기): ${SR ? (micDenied ? '마이크 권한이 꺼져 있어요 (크롬 설정 → 사이트 설정 → 마이크)' : '사용 가능') : '이 브라우저는 지원하지 않아요 → 크롬에서 열어주세요'}</li>
       </ul></div>
+      `)}
     </div></div>`, {
+      ...parentCommonHandlers(),
       home: homeScreen,
       school: () => { const u = document.getElementById('school').value; S.pos = { u, d: 1, s: 0 }; save(); toast(`${unitById(u).title} 1일차부터 시작해요`); parentScreen(); },
       setpos: () => { const p = parseCode(document.getElementById('pcode').value); if (!p) return toast('예: 6-3-1 처럼 적어주세요'); S.pos = p; save(); toast(`진도를 ${posCode(p)}로 맞췄어요`); parentScreen(); },
@@ -1232,6 +1331,7 @@
       gave: () => { S.rewards.push({ date: today(), text: S.settings.goalText, stars: Number(S.settings.goalStars) }); S.goalBase = S.stars; save(); toast('보상을 기록했어요. 새 목표를 시작해요!'); parentScreen(); },
       reset: (x, btn) => { if (btn.dataset.sure) { S = defaults(); save(); toast('초기화했어요'); homeScreen(); } else { btn.dataset.sure = 1; btn.textContent = '정말 초기화? 한 번 더 누르기'; } },
     });
+    ptabReveal();
     const lf = document.getElementById('loadFile');
     if (lf) lf.addEventListener('change', () => { const f = lf.files[0]; if (!f) return; f.text().then(txt => { if (restore(txt)) { toast('백업을 불러왔어요!'); parentScreen(); } else toast('백업 파일이 올바르지 않아요'); }); });
     document.querySelectorAll('[data-set]').forEach(el => el.addEventListener('change', () => {
