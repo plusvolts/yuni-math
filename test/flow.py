@@ -26,6 +26,11 @@ MOCK = """
   Object.defineProperty(window, 'speechSynthesis', { value: synth, configurable: true });
   class FakeSR { start(){ setTimeout(()=>{ const t = window.__srText || '십을 먼저 만들고 삼을 더해요'; this.onresult && this.onresult({results:[[{transcript:t}]]}); this.onend && this.onend(); }, 30); } stop(){} abort(){} }
   window.SpeechRecognition = FakeSR; window.webkitSpeechRecognition = FakeSR;
+  // 한국어 녹음(공통 65번): ko()가 받은 글 기록 + 녹음 재생은 파일을 실제로 요청하고 바로 끝난 것으로 (빠르게)
+  window.__KO_LOG = []; window.__audio = [];
+  window.Audio = function (src) { const a = { src, playbackRate: 1, onended: null, onerror: null, pause(){},
+    play(){ window.__audio.push(src); return fetch(src).then(r => { if (!r.ok) throw new Error('404'); setTimeout(() => a.onended && a.onended(), 3); })
+      .catch(() => { setTimeout(() => a.onerror && a.onerror(), 1); }); } }; return a; };
   // 영어 앱 저장 데이터가 있어도 건드리지 않는지 확인용
   if (!localStorage.getItem('yuni-english-v1')) localStorage.setItem('yuni-english-v1', JSON.stringify({stars: 77, marker: 'english'}));
 })();
@@ -333,6 +338,35 @@ async def parent_common_checks(pg, name):
     check('MREQ-61', await pin_try(pg, '1234'), '되돌린 뒤 1234 → 열림')
     await pg.click('.topbar [data-act=home]')
 
+KO_COVER_JS = """async () => { const idx = await (await fetch('audio-ko/index.json')).json(); const key = t => String(t).replace(/\\s+/g, ' ').trim();
+  let n = 0, hit = 0; const miss = [];
+  for (const t of window.__KO_LOG) { const w = !!idx[key(t)]; for (const s of YUNI.koSentences(key(t))) { n++; if (w || idx[s]) hit++; else miss.push(s); } }
+  return { n, hit, miss: [...new Set(miss)], files: Object.keys(idx).length }; }"""
+
+async def ko_rec_checks(pg, name):
+    """공통 65번 한국어 녹음: 하루 흐름에서 읽은 문장의 녹음 비율, 녹음 파일 요청, 기기 음성 설정"""
+    cov = await pg.evaluate(KO_COVER_JS)
+    pct = round(cov['hit'] / max(1, cov['n']) * 100, 1)
+    if cov['miss']: print(f'  [{name}] 녹음 없는 문장 {len(cov["miss"])}개:', ' | '.join(cov['miss'][:40]))
+    check('MREQ-65', pct >= 90, f'{name} 하루 흐름 문장 {cov["n"]}개 중 녹음 {pct}% (녹음 목록 {cov["files"]}개)')
+    reqs = await state(pg, 'window.__audio')
+    check('MREQ-65', any(re.search(r'audio-ko/[0-9a-f]{12}\.mp3$', u) for u in reqs), f'{name} 녹음 파일 요청 {len(reqs)}번')
+    # 설정: 기기 음성으로 바꾸면 녹음을 안 써요
+    await gate(pg); await ptab(pg, 'settings')
+    opts = await pg.evaluate("[...document.querySelectorAll('[data-set=koVoiceMode] option')].map(o => o.value + ':' + o.textContent)")
+    check('MREQ-65', opts == ['rec:녹음 목소리 (추천)', 'device:기기 음성'], f'{name} 한국어 읽기 설정 {opts}')
+    await pg.select_option('[data-set=koVoiceMode]', 'device'); await pg.wait_for_timeout(50)
+    await pg.click('.topbar [data-act=home]')
+    await pg.evaluate("window.__audio = []; window.__said = []")
+    await pg.click('[data-act=hello]', force=True); await pg.wait_for_timeout(400)
+    a1, s1 = await state(pg, 'window.__audio'), await state(pg, 'window.__said')
+    check('MREQ-65', await state(pg, 'YUNI.state.settings.koVoiceMode') == 'device' and not a1 and s1, f'{name} 기기 음성 설정 → 녹음 요청 {len(a1)}번, 기기 음성 {len(s1)}번')
+    await gate(pg); await ptab(pg, 'settings'); await pg.select_option('[data-set=koVoiceMode]', 'rec'); await pg.click('.topbar [data-act=home]')
+    await pg.evaluate("window.__audio = []; window.__said = []")
+    await pg.click('[data-act=hello]', force=True); await pg.wait_for_timeout(400)
+    a2, s2 = await state(pg, 'window.__audio'), await state(pg, 'window.__said')
+    check('MREQ-65', a2 and not s2, f'{name} 녹음 목소리로 되돌리면 → 녹음 {len(a2)}번, 기기 음성 {len(s2)}번')
+
 async def run_device(p, name, vw, vh, full):
     b = await p.chromium.launch()
     ctx = await b.new_context(viewport={'width': vw, 'height': vh}, has_touch=(vw < 500))
@@ -371,6 +405,7 @@ async def run_device(p, name, vw, vh, full):
     check('MREQ-08', len(st['weak']) >= 1, f"틀린 유형 기록 {list(st['weak'].keys())}")
     check('MREQ-36', len(st['stats']) >= 3, f"유형 {len(st['stats'])}개")
     await pg.click('[data-act=home]')
+    await ko_rec_checks(pg, name)
 
     if full:
         # 같은 날 여러 번 해도 하루 별 50개 이하 (MREQ-18)
@@ -587,6 +622,10 @@ def static_checks():
     check('MREQ-21', f'v{ver}' in spec and '현재 버전: **v' + ver in spec, f'기획서.md에 v{ver}')
     check('MREQ-34', not re.search(r'남은 시간|초시계|countdown|타이머 표시', app), '타이머·초시계 없음')
     check('MREQ-38', man['theme_color'].lower() == '#22a06b' and '--primary: #22a06b' in open(os.path.join(APP_DIR, 'style.css'), encoding='utf-8').read(), '초록색 테마')
+    kl = json.load(open(os.path.join(APP_DIR, 'tools', 'ko_sentences.json'), encoding='utf-8'))
+    bad = [x for x in kl if re.search(r'[0-9+=−□:→]', x['say'])]
+    check('MREQ-65', not bad and len(kl) <= 2500, f'녹음 문장 {len(kl)}개, 읽는 말에 숫자·기호 남은 것 {len(bad)}개 {bad[:2]}')
+    check('MREQ-65', "'audio-ko/index.json'" in sw and 'cacheAudio' in sw and "koVoiceMode: 'rec'" in app and 'koStop(); try { speechSynthesis.cancel()' in app, 'sw 캐시·기본 설정·hush 멈춤')
     ids = set(re.findall(r'MREQ-\d+', spec))
     return ids, ver
 
