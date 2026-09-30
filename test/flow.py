@@ -397,6 +397,45 @@ async def run_device(p, name, vw, vh, full):
     check('MREQ-04', st['done'].get('2-1-1') == today and st['pos'] == {'u': '2-1', 'd': 2, 's': 0}, f'{name} 1일차 완료 → 2일차')
     check('MREQ-18', st['log'][today]['stars'] <= 50, f"{name} 오늘 별 {st['log'][today]['stars']}")
     await pg.screenshot(path=f'{SHOT}/{name}-reward.png')
+    st = await state(pg, 'YUNI.state')
+    ex0 = st['explains'][0] if st['explains'] else {}
+    check('MREQ-40', ex0.get('said') and (re.fullmatch(r'\d+', ex0['said']) or ex0['said'] in ('짝수', '홀수', '(넘어감)')), f"{name} 설명하기는 입력한 정답으로 기록: {ex0.get('said')}")
+    await pg.click('[data-act=home]')
+
+    # 연산 연습 (MREQ-39) + 실제 키보드로 정답 넣기 (MREQ-40)  — 녹음 비율(MREQ-65)은 하루 흐름만 보려고 기록을 잠시 따로 둬요
+    await pg.evaluate("window.__KO_SAVE = window.__KO_LOG.slice()")
+    await pg.click('[data-act=drill]'); await pg.wait_for_timeout(150)
+    nops = await pg.locator('[data-act=op]').count()
+    check('MREQ-39', nops == 5, f'{name} 연산 고르기 {nops}개 (더하기·빼기·곱하기·나누기·섞어서)')
+    await pg.screenshot(path=f'{SHOT}/{name}-drill-ops.png')
+    await pg.click('[data-act=op][data-arg="mul"]'); await pg.wait_for_timeout(120)
+    await pg.screenshot(path=f'{SHOT}/{name}-drill-sizes.png')
+    await pg.click('[data-act=size][data-arg="all"]'); await wait_ready(pg)
+    exprs = await pg.evaluate("YUNI.lesson.acts.map(a => a.prob.expr)")
+    check('MREQ-39', len(exprs) == 10 and all('×' in e for e in exprs), f'{name} 곱셈구구 10문제 {exprs[:3]}')
+    await pg.screenshot(path=f'{SHOT}/{name}-drill-prob.png')
+    info = await pg.evaluate(INFO); s0 = await state(pg, 'YUNI.state.stars')
+    await pg.keyboard.type('9'); await pg.keyboard.press('Backspace')
+    typed = await pg.evaluate("[...document.querySelectorAll('.abox span')].map(x => x.textContent).join('')")
+    check('MREQ-40', typed == '', f'{name} 키보드 Backspace로 지우기')
+    await pg.keyboard.type(info['answer']); await pg.keyboard.press('Enter')
+    await wait_change(pg, (info['s'], info['i']))
+    check('MREQ-40', await state(pg, 'YUNI.state.stars') == s0 + 1, f'{name} 키보드 숫자+Enter로 정답 → 별 +1')
+    await play_day(pg, f'{name}-drill', wrong_every=3)
+    txt = await pg.locator('.reward').inner_text()
+    dr = await state(pg, 'YUNI.state.drill')
+    check('MREQ-39', '연산 연습 끝' in txt and dr['n'] == 1, f'{name} 연산 연습 끝 화면, 오늘 {dr["n"]}번')
+    await pg.screenshot(path=f'{SHOT}/{name}-drill-done.png')
+    await pg.click('[data-act=other]'); await pg.click('[data-act=op][data-arg="div"]'); await pg.click('[data-act=size][data-arg="e"]'); await wait_ready(pg)
+    exprs = await pg.evaluate("YUNI.lesson.acts.map(a => a.prob.expr)")
+    check('MREQ-39', all('÷' in e for e in exprs), f'{name} 나누기 {exprs[:3]}')
+    await pg.click('[data-act=quit]')
+    await pg.click('[data-act=drill]'); await pg.click('[data-act=op][data-arg="add"]'); await pg.click('[data-act=size][data-arg="b3"]'); await wait_ready(pg)
+    exprs = await pg.evaluate("YUNI.lesson.acts.map(a => a.prob.expr)")
+    check('MREQ-39', all(re.match(r'\d{3}\+\d{3}=', e) for e in exprs), f'{name} 세 자리 더하기 {exprs[:2]}')
+    await pg.screenshot(path=f'{SHOT}/{name}-drill-big3.png')
+    await pg.click('[data-act=quit]')
+    await pg.evaluate("window.__KO_LOG = window.__KO_SAVE")
     said = await state(pg, 'window.__said')
     bad = [s for s in said if re.search(r'[0-9+=−□]', s)]
     check('MREQ-12', not bad, f'숫자·기호가 그대로 읽힌 문장 {len(bad)}개 {bad[:2]}')
@@ -404,7 +443,6 @@ async def run_device(p, name, vw, vh, full):
     check('MREQ-35', len(st['explains']) >= 1 and st['explains'][0]['said'], '설명하기 글자 기록')
     check('MREQ-08', len(st['weak']) >= 1, f"틀린 유형 기록 {list(st['weak'].keys())}")
     check('MREQ-36', len(st['stats']) >= 3, f"유형 {len(st['stats'])}개")
-    await pg.click('[data-act=home]')
     await ko_rec_checks(pg, name)
 
     if full:
@@ -457,8 +495,22 @@ async def run_device(p, name, vw, vh, full):
         modes = await pg.evaluate("Object.keys(YUNI.state.stats)")
         check('MREQ-31', len(modes) >= 12, f'유형 {len(modes)}개 풀어봄')
 
-        # 준비 중 단원은 막혀 있어요
-        await pg.click('[data-act=picker]'); await pg.click('[data-act=unit][data-arg="2-5"]'); await pg.wait_for_timeout(100)
+        # v0.5.0: 새로 열린 단원 (1학년 2학기 모양·시계, 2학년 1·2학기 12단원) 오늘의 단원을 하루씩 (MREQ-30·31)
+        new_units = await pg.evaluate("CONTENT.units.filter(u => u.ready && !['2-1','2-2','2-4','2-6'].includes(u.id)).map(u => [u.id, u.days.length])")
+        check('MREQ-30', len(new_units) == 14, f'새 단원 {len(new_units)}개 {[u for u, _ in new_units]}')
+        for k, (u, nd) in enumerate(new_units):
+            d = 1 + (k % max(1, nd - 1))
+            await pg.evaluate("YUNI.state.log[Object.keys(YUNI.state.log).sort().pop()].stars = 0")
+            await pg.click('[data-act=picker]'); await pg.click(f'[data-act=unit][data-arg="{u}"]'); await pg.click(f'[data-act=day][data-arg="{d}"]'); await pg.click('[data-act=step][data-arg="2"]')
+            await wait_ready(pg); await pg.screenshot(path=f'{SHOT}/{name}-new-{u}-{d}.png')
+            await play_day(pg, f'{name}-new-{u}-{d}', wrong_every=5 if k % 3 == 0 else 0); await pg.click('[data-act=home]')
+        st = await state(pg, 'YUNI.state')
+        newt = [t for t in st['stats'] if re.match(r'(shape|clock|pat|big|len|sort|chart|mul|carry2|borrow2|threeBig|blank)', t)]
+        check('MREQ-31', len(newt) >= 15, f'새 유형 {len(newt)}개 풀어봄 {newt[:8]}')
+        check('MREQ-30', all(st['done'].get(f'{u}-{1 + (k % max(1, nd - 1))}') for k, (u, nd) in enumerate(new_units)), '새 단원 하루씩 완료')
+
+        # 준비 중 단원은 막혀 있어요 (1학년 1학기)
+        await pg.click('[data-act=picker]'); await pg.click('[data-act=unit][data-arg="1-1"]'); await pg.wait_for_timeout(100)
         check('MREQ-30', await state(pg, 'YUNI.screen') == 'picker' and await pg.locator('.days').count() == 0, '준비 중 단원 선택 안 됨')
         await pg.screenshot(path=f'{SHOT}/{name}-picker.png')
         await pg.click('[data-act=home]')
@@ -601,6 +653,31 @@ async def unit_checks(p):
       return bad.slice(0, 5);
     }""")
     check('MREQ-31', not bad, f'문제 생성기 오류 {bad}')
+    # v0.5.0: 새 단원·연산 연습·사다리 문제 생성기 점검 (답, 보기, 식 계산, 풀이)
+    r2 = await pg.evaluate("""() => {
+      const C = window.CONTENT, Y = window.YUNI; const bad = []; let n = 0;
+      const chk = (pr, tag) => { n++;
+        if (pr.answer === undefined || pr.answer === null || pr.answer === '' || (typeof pr.answer === 'number' && (!Number.isInteger(pr.answer) || pr.answer < 0))) bad.push(['ans', tag, pr.answer]);
+        if (pr.input === 'choice') { if (!pr.choices.map(String).includes(String(pr.answer))) bad.push(['nochoice', tag, pr.answer, pr.choices]); if (new Set(pr.choices.map(String)).size !== pr.choices.length) bad.push(['dup', tag, pr.choices]); }
+        if (pr.input === 'pad' && String(pr.answer).length > 4) bad.push(['long', tag, pr.answer]);
+        if (!pr.steps || !pr.steps.length || !pr.hint1) bad.push(['steps', tag]);
+        const q = pr.calc; if (q) { let v; if (q.kind === 'blank') v = q.op === '+' ? q.a + q.ans === q.c : q.a - q.ans === q.c; else if (q.kind === 'mulBlank') v = q.a * q.ans === q.c; else if (q.kind === 'make10') v = q.a + q.ans === 10;
+          else if (q.c !== undefined) { const m = q.op === '+' ? q.a + q.b : q.a - q.b; v = m >= 0 && (q.op2 === '+' ? m + q.c : m - q.c) === q.ans; } else v = ({ '+': q.a + q.b, '-': q.a - q.b, '×': q.a * q.b, '÷': q.a / q.b })[q.op] === q.ans;
+          if (!v) bad.push(['calc', tag, q]);
+          if (q.kind === 'carry2' && q.a % 10 + q.b % 10 < 10) bad.push(['carry2', q]); if (q.kind === 'borrow2' && q.a % 10 >= q.b % 10) bad.push(['borrow2', q]); }
+      };
+      C.units.filter(u => u.ready).forEach(u => u.days.forEach((d, di) => d.items.forEach((it, ii) => { for (let i = 0; i < 40; i++) try { chk(Y.genProblem(it.g, it.p, `u${u.id}${di}${ii}${i}`), `${u.id}/${di + 1}/${it.g}`); } catch (e) { bad.push(['err', u.id, it.g, String(e)]); } })));
+      C.ladder.forEach((l, i) => { for (let k = 0; k < 40; k++) try { chk(Y.genProblem('calc', l.p, 'l' + i + k, { concrete: false }), 'ladder' + i); } catch (e) { bad.push(['err', 'ladder', i, String(e)]); } });
+      C.drill.ops.forEach(o => o.sizes.forEach(z => { for (let k = 0; k < 150; k++) try { chk(Y.genProblem('calc', z.p, 'd' + o.id + z.id + k, { concrete: false }), 'drill ' + o.id + z.id); } catch (e) { bad.push(['err', 'drill', o.id, z.id, String(e)]); } }));
+      C.units.filter(u => u.ready).forEach(u => u.explain.forEach(ex => { if (ex.ans === undefined || (ex.choices && !ex.choices.map(String).includes(String(ex.ans)))) bad.push(['explain', u.id, ex.q]); }));
+      return { n, bad: bad.slice(0, 5), ready: C.units.filter(u => u.ready).map(u => u.sem), ladder: C.ladder.length, ops: C.drill.ops.map(o => o.id) };
+    }""")
+    check('MREQ-31', not r2['bad'], f"새 문제 생성기 {r2['n']}개 점검, 오류 {r2['bad']}")
+    check('MREQ-30', r2['ready'].count('1-2') == 6 and r2['ready'].count('2-1') == 6 and r2['ready'].count('2-2') == 6, f"공부할 수 있는 단원: 1-2 {r2['ready'].count('1-2')}개, 2-1 {r2['ready'].count('2-1')}개, 2-2 {r2['ready'].count('2-2')}개")
+    check('MREQ-32', r2['ladder'] == 20, f"연산 사다리 {r2['ladder']}칸")
+    check('MREQ-39', r2['ops'] == ['add', 'sub', 'mul', 'div', 'mix'], f"연산 연습 종류 {r2['ops']}")
+    sp = await pg.evaluate("""() => ['3시 30분', '6×5=30', '45÷5=?', '15cm', '134cm=□m 34cm', '1시간=60분', '3군데'].map(YUNI.speakify)""")
+    check('MREQ-12', sp == ['세 시 삼십 분', '육 곱하기 오는 삼십', '사십오 나누기 오는?', '십오 센티미터', '백삼십사 센티미터는 몇 미터 삼십사 센티미터', '한 시간은 육십 분', '세 군데'], f'새 읽기 규칙 {sp}')
     st = await pg.evaluate("""() => { let f = 0, e = 0, th = new Set(); for (let i = 0; i < 200; i++) { const pr = YUNI.genProblem('story', {kind: 'two', op: 'mix'}, 's' + i);
       if (/현이가|초록이가|은후가|윤이/.test(pr.q)) f++; if (pr.eunhoo != null) e++; th.add(pr.pic); } return {f, e, th: th.size}; }""")
     check('MREQ-06', st['f'] >= 60 and st['e'] >= 20 and st['th'] >= 9, f"친구가 나오는 이야기 {st['f']}/200, 은후 답 {st['e']}, 주제 그림 {st['th']}종")
@@ -624,8 +701,9 @@ def static_checks():
     check('MREQ-38', man['theme_color'].lower() == '#22a06b' and '--primary: #22a06b' in open(os.path.join(APP_DIR, 'style.css'), encoding='utf-8').read(), '초록색 테마')
     kl = json.load(open(os.path.join(APP_DIR, 'tools', 'ko_sentences.json'), encoding='utf-8'))
     bad = [x for x in kl if re.search(r'[0-9+=−□:→]', x['say'])]
-    check('MREQ-65', not bad and len(kl) <= 2500, f'녹음 문장 {len(kl)}개, 읽는 말에 숫자·기호 남은 것 {len(bad)}개 {bad[:2]}')
+    check('MREQ-65', not bad and len(kl) <= 4500, f'녹음 문장 {len(kl)}개, 읽는 말에 숫자·기호 남은 것 {len(bad)}개 {bad[:2]}')
     check('MREQ-65', "'audio-ko/index.json'" in sw and 'cacheAudio' in sw and "koVoiceMode: 'rec'" in app and 'koStop(); try { speechSynthesis.cancel()' in app, 'sw 캐시·기본 설정·hush 멈춤')
+    check('MREQ-40', 'SpeechRecognition' not in app and "document.addEventListener('keydown'" in app and 'data-mic' not in app, '말하기(음성인식) 없음, 키보드 입력 처리')
     ids = set(re.findall(r'MREQ-\d+', spec))
     return ids, ver
 

@@ -1,5 +1,5 @@
 /* 오프라인 캐시. 파일을 고치면 VERSION 숫자를 올려주세요 (app.js의 APP_VERSION도 함께). */
-const VERSION = 'yuni-math-7';
+const VERSION = 'yuni-math-8';
 const FILES = ['./', 'index.html', 'style.css', 'content.js', 'app.js', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png', 'audio-ko/index.json', '기획서.md'];
 // 한국어 녹음 파일(공통 65번)은 설치 뒤 백그라운드로 모두 받아둬요 (오프라인용)
 // 파일이 많아서(2천 개 넘게) 8개씩 차례로 받아요

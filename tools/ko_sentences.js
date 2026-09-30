@@ -12,7 +12,7 @@ const { chromium } = require('playwright');
 const fs = require('fs'); const path = require('path');
 const args = process.argv.slice(2);
 const URL = args.find(a => /^https?:/.test(a)) || 'http://localhost:8783/';
-const MAX = args.includes('--max') ? Number(args[args.indexOf('--max') + 1]) : 2500;
+const MAX = args.includes('--max') ? Number(args[args.indexOf('--max') + 1]) : 4500; // v0.5.0: 2학년·연산 연습 추가로 2,500 → 4,500
 const SEEDS = 400;
 
 (async () => {
@@ -32,13 +32,17 @@ const SEEDS = 400;
       '괜찮아, 천천히 해 보자.', '정답을 넣으면 별을 받아요!', '같이 풀어 보자.', '고마워!', '이렇게도 말할 수 있어.', `${child}${josa(child, '은', '는')}?`,
       L.showAnswer, ...L.praise, ...L.retry].forEach(addFixed);
     ['오늘의 수', '복습', '오늘의 단원', '반짝 연산', '설명하기'].forEach(n => addFixed(`다음은 ${n}!`));
+    // v0.5.0: 연산 연습·가르쳐주기(숫자 입력)
+    ['연산 연습! 천천히 해도 돼요.', '연산 연습 끝! 정말 잘했어!', '연산 연습 끝! 끝까지 잘했어!', '어떤 연산을 연습할까?', '괜찮아! 같이 풀어 보자.'].forEach(addFixed);
+    (C.drill ? C.drill.ops : []).forEach(o => addFixed(`${o.name}! 어떤 수로 할까?`));
     C.ladder.forEach((l, i) => addFixed(`지금 연산 사다리 ${i + 1}칸이에요.`));
     C.units.forEach(un => {
       addFixed(`${un.title} 단원은 아직 준비 중이에요.`); addFixed(`${un.title} 스티커! 정말 잘했어!`); addFixed(`${un.title} 마무리 도전에서 8개 넘게 맞히면 받을 수 있어요.`);
       if (!un.ready) return;
       addFixed(`${un.title} 마무리 도전! 10문제 중 8개를 맞히면 스티커를 받아요`);
       un.days.forEach(d => (d.concept || []).forEach(cc => { addFixed(`${robot}${josa(robot, '과', '와')} 함께 배워요.`); addFixed(`${cc.title}!`); addFixed(cc.text); }));
-      (un.explain || []).forEach(ex => { addFixed(`${callName}, ${ex.q}`); addFixed(ex.model); });
+      (un.explain || []).forEach(ex => { addFixed(`${callName}, ${ex.q}`); addFixed(ex.model); if (ex.hint) L.retry.forEach(rt => addFixed(`${rt} ${ex.hint}`)); addFixed(ex.hint || '천천히 생각해 봐요. 그림을 떠올려 봐요.');
+        addFixed(`정답은 ${ex.ans}${ex.unit || ''}.`); });
     });
     Object.values(C.friends).forEach(f => { addFixed(`${f.name}${josa(f.name, '이', '가')} 물어봐요.`); const c = f.call || f.name; addFixed(`우와! ${c}${josa(c, '이', '가')} 이제 알겠대.`); });
     for (let n = 0; n <= 100; n++) addFixed(String(n)); // 구슬 세기(숫자만)·오늘의 수 정답
@@ -55,7 +59,8 @@ const SEEDS = 400;
     const sayGuess = pr => { const w = `${pr.eunhoo}${pr.unit || ''}`; return w + josa(w, '이라고', '라고'); };
     const probTexts = (pr, w) => {
       addF(pr.q, w); if (pr.expr) addF(pr.expr.replace('=□', '=?'), w); addF(pr.sub, w);
-      const ansSay = pr.expr ? pr.expr.replace('□', pr.answer) : pr.storyExpr ? pr.storyExpr.replace('□', pr.answer) : `${pr.answer}${pr.unit || ''}`;
+      const ansWord = `${pr.sayAns || pr.answer}${pr.unit || ''}`;
+      const ansSay = pr.expr ? pr.expr.replace('□', pr.answer) : pr.storyExpr ? pr.storyExpr.replace('□', pr.answer) : ansWord;
       addF(ansSay, w);
       if (pr.eunhoo != null) {
         addF(`은후는 ${sayGuess(pr)} 생각한대.`, w);
@@ -63,7 +68,7 @@ const SEEDS = 400;
       }
       // 틀렸을 때 (덜 자주)
       addF(pr.hint1, w * 0.4); pr.steps.forEach(s => addF(s, w * 0.25));
-      addF(`정답은 ${pr.answer}${pr.unit ? pr.unit : ''}.`, w * 0.15);
+      addF(`정답은 ${ansWord}.`, w * 0.15);
     };
     const run = (g, p, tag, ctx, times) => { for (let i = 0; i < SEEDS; i++) probTexts(genProblem(g, p, `${tag}|${i}`, ctx), times / SEEDS); };
     C.units.filter(u => u.ready).forEach(un => un.days.forEach((d, di) => d.items.forEach((it, ii) => {
@@ -71,6 +76,8 @@ const SEEDS = 400;
       run(it.g, it.p, `${un.id}|${di}|${ii}`, d.challenge ? { eunhoo: false } : {}, n * 1.5); // 오늘의 단원 + 복습
     })));
     C.ladder.forEach((l, rung) => run('calc', l.p, `ladder|${rung}`, { concrete: rung < 7, eunhoo: false }, 5 * (rung < 4 ? 2 : 1)));
+    // v0.5.0: 연산 연습 (홈 → 🧮)
+    (C.drill ? C.drill.ops : []).forEach(o => o.sizes.forEach(z => run('calc', z.p, `drill|${o.id}|${z.id}`, { concrete: false, eunhoo: false }, 3)));
     return { fixed: [...fixed], freq: [...freq.entries()] };
   }, { SEEDS });
   // 자주 나오는 순서로 채우기

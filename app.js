@@ -1,7 +1,7 @@
 /* 윤이 수학 — 앱 로직 (의존성 없음). 뼈대는 윤이 영어 v1.3.3에서 복사했어요. */
 (() => {
   'use strict';
-  const APP_VERSION = '0.4.0';
+  const APP_VERSION = '0.5.0';
   const C = window.CONTENT;
   const U = C.units;
   const READY = U.filter(u => u.ready);
@@ -12,7 +12,7 @@
     { id: 'flash', name: '반짝 연산', icon: '⚡' },
     { id: 'explain', name: '설명하기', icon: '🗣️' },
   ];
-  const MODES = { 1: '세어 봐요', 2: '수의 순서', 3: '더 큰 수는?', 4: '모으기·가르기', 5: '계산해요', 6: '이야기 문제' };
+  const MODES = { 1: '세어 봐요', 2: '수의 순서', 3: '더 큰 수는?', 4: '모으기·가르기', 5: '계산해요', 6: '이야기 문제', 7: '모양·도형', 8: '시계 보기', 9: '규칙 찾기', 10: '큰 수', 11: '길이 재기', 12: '분류·표·그래프', 13: '곱셈', 14: '가르쳐주기' };
   const KEY = 'yuni-math-v1'; // 절대 바꾸지 않아요 (바꾸면 진도·별·보상이 사라져요). 영어 앱 저장 키와 따로예요.
   const $app = document.getElementById('app');
 
@@ -24,11 +24,12 @@
       weak: {}, stats: {}, days: [], log: {}, stickers: {}, override: '', rewards: [],
       ladder: { rung: 0, streak: 0, lastDate: '', hist: [], badges: {} },
       explains: [], challenge: {}, reviewPick: null,
+      drill: { date: '', round: 0, n: 0, total: 0 }, // 연산 연습 (v0.5.0)
     };
   }
   function merge(o) {
     const d = defaults();
-    return Object.assign(d, o, { settings: Object.assign(d.settings, o.settings || {}), ladder: Object.assign(d.ladder, o.ladder || {}) });
+    return Object.assign(d, o, { settings: Object.assign(d.settings, o.settings || {}), ladder: Object.assign(d.ladder, o.ladder || {}), drill: Object.assign(d.drill, o.drill || {}) });
   }
   function load() {
     try { const raw = localStorage.getItem(KEY); if (raw) return merge(JSON.parse(raw)); } catch (e) { /* 저장소 사용 불가 */ }
@@ -61,6 +62,7 @@
   const unitById = id => U.find(u => u.id === id);
   const unitNo = u => U.indexOf(u) + 1;
   const unitLabel = u => `${u.sem} ${u.title}`;
+  const semName = sem => { const [g, h] = String(sem).split('-'); return `${g}학년 ${h}학기`; };
 
   /* 씨앗 난수: 같은 날·같은 자리의 문제는 언제나 같은 문제 (◀ 이전 버튼으로 돌아가도 같아요) */
   function hashStr(s) { let h = 1779033703 ^ s.length; for (let i = 0; i < s.length; i++) { h = Math.imul(h ^ s.charCodeAt(i), 3432918353); h = (h << 13) | (h >>> 19); } return (h ^ (h >>> 16)) >>> 0; }
@@ -89,13 +91,21 @@
   // 조사: josa(8, '은', '는') → '은' (팔은), josa(5,'은','는') → '는' (오는)
   function josa(w, a, b) { const s = lastWord(w); const ch = s[s.length - 1] || ''; if (a === '으로' && ch && (s.charCodeAt(s.length - 1) - 0xAC00) % 28 === 8) return b; return hasBatchim(ch) ? a : b; }
   const J = (n, a, b) => `${n}${josa(n, a, b)}`;
-  const COUNTERS = '개|마리|명|장|살|대|송이|권|번|칸|문제|줄|쌍';
+  const COUNTERS = '개|마리|명|장|살|대|송이|권|번|칸|문제|줄|쌍|군데|묶음|자루|봉지|접시|모둠|켤레|달';
   // 화면 글 → 읽기 쉬운 말 (8+5=? → 팔 더하기 오는?, 7마리 → 일곱 마리)
   function speakify(t) {
     t = String(t);
-    t = t.replace(/[()]/g, ' ');
+    t = t.replace(/[()]/g, ' ').replace(/\p{Extended_Pictographic}\uFE0F?/gu, ' ');
+    t = t.replace(/×/g, ' 곱하기 ').replace(/÷/g, ' 나누기 ');
+    t = t.replace(/□\s*cm/g, '몇 센티미터').replace(/□\s*m(?![a-z])/g, '몇 미터');
     t = t.replace(/□/g, '몇');
     t = t.replace(/(\d+)월/g, (m, n) => ({ 6: '유월', 10: '시월' }[+n] || sino(n) + '월'));
+    // 시각·길이 (v0.5.0): 3시 30분 → 세 시 삼십 분, 2시간 → 두 시간, 15cm → 십오 센티미터, 1m → 일 미터
+    t = t.replace(/(\d+)\s*시간/g, (m, n) => `${+n < 100 ? native(+n, true) : sino(n)} 시간`);
+    t = t.replace(/(\d+)\s*시(?![작험])/g, (m, n) => `${+n <= 24 ? native(+n, true) : sino(n)} 시`);
+    t = t.replace(/(\d+)\s*분/g, (m, n) => `${sino(n)} 분`);
+    t = t.replace(/(\d+)\s*cm/g, (m, n) => `${sino(n)} 센티미터`).replace(/(\d+)\s*m(?![a-z])/g, (m, n) => `${sino(n)} 미터`);
+    t = t.replace(/cm/g, '센티미터').replace(/(^|[^a-z])m(?![a-z])/g, '$1미터');
     t = t.replace(new RegExp(`(\\d+)\\s*(${COUNTERS})(?!째)`, 'g'), (m, n, u) => `${+n < 100 ? native(+n, true) : sino(n)} ${u}`);
     t = t.replace(/\d+/g, m => sino(m));
     t = t.replace(/\s*\+\s*/g, ' 더하기 ').replace(/\s*[−–]\s*/g, ' 빼기 ').replace(/([가-힣])\s*-\s*(?=[가-힣])/g, '$1 빼기 ');
@@ -207,33 +217,10 @@
   const ding = () => tone([880, 1320], 0.14);
   const pop = () => tone([660], 0.06); // 구슬 넣는 소리 (틀렸을 때 "땡" 소리는 없어요)
 
-  /* ================= 음성 인식 (설명하기, 한국어) ================= */
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  let micDenied = false;
-  let rec = null;
-  const canListen = () => !!SR && !micDenied;
-  function recognize() {
-    return new Promise(resolve => {
-      const alts = []; let r;
-      try { r = new SR(); } catch (e) { return resolve(alts); }
-      r.lang = 'ko-KR'; r.interimResults = false; r.maxAlternatives = 3; r.continuous = false;
-      r.onresult = e => { for (const res of e.results) for (let i = 0; i < res.length; i++) alts.push(res[i].transcript); };
-      r.onerror = e => { if (e.error === 'not-allowed' || e.error === 'service-not-allowed' || e.error === 'audio-capture') micDenied = true; };
-      let fin = false; const end = () => { if (fin) return; fin = true; clearTimeout(guard); if (rec === r) rec = null; resolve(alts); };
-      r.onend = end;
-      const guard = setTimeout(() => { try { r.abort(); } catch (e) { /* */ } end(); }, 15000); // 응답 없을 때 안전장치 (아이에게 보이는 시간 제한 아님)
-      rec = r;
-      try { r.start(); } catch (e) { end(); }
-    });
-  }
-  function stopRec() { if (rec) { try { rec.stop(); } catch (e) { /* */ } } }
-  const squash = s => String(s).replace(/\s+/g, '');
-  const koMatch = (alts, kws) => alts.some(a => kws.some(k => squash(a).includes(squash(k))));
-
   /* ================= 화면 관리 ================= */
   let H = {}; let screen = ''; let actToken = 0;
   function render(name, html, handlers) {
-    screen = name; hush(); stopRec(); actToken++;
+    screen = name; hush(); actToken++;
     document.querySelectorAll('.confetti,.feedback,.ghost').forEach(x => x.remove());
     $app.innerHTML = html; H = handlers || {}; window.scrollTo(0, 0);
   }
@@ -242,6 +229,21 @@
     if (say) { e.stopPropagation(); hush(); ko(say.dataset.say); return; }
     const b = e.target.closest('[data-act]');
     if (b && !b.disabled && H[b.dataset.act]) H[b.dataset.act](b.dataset.arg, b, e);
+  });
+
+  // 실제 키보드로 정답 넣기 (v0.5.0): 숫자 키 → 숫자 패드, Backspace → 지우기, Enter → 확인. 보기 문제는 1~4 키로 고르기
+  document.addEventListener('keydown', e => {
+    if (screen !== 'lesson' || e.ctrlKey || e.altKey || e.metaKey) return;
+    const tg = e.target; if (tg && tg.closest && tg.closest('input, textarea, select')) return;
+    if (document.querySelector('.pad')) {
+      if (/^[0-9]$/.test(e.key) && H.key) { e.preventDefault(); H.key(e.key); }
+      else if (e.key === 'Backspace' && H.del) { e.preventDefault(); H.del(); }
+      else if (e.key === 'Enter' && H.ok) { e.preventDefault(); H.ok(); }
+      return;
+    }
+    const cs = document.querySelectorAll('.choices .choice');
+    if (cs.length && /^[1-9]$/.test(e.key) && !cs[0].dataset.arg.match(/^\d+$/)) { const b = cs[+e.key - 1]; if (b) { e.preventDefault(); b.click(); } return; }
+    if (e.key === 'Enter') { const nx = document.querySelector('#nextRow:not([hidden]) [data-act=next], .next-row [data-act=next]'); if (nx) { e.preventDefault(); nx.click(); } }
   });
 
   /* ================= 잠금 (하루 시간 제한만. 밤 시간 잠금은 없어요) ================= */
@@ -286,6 +288,7 @@
         <div class="robot" data-act="hello">🤖</div>
         <div class="friends">${Object.keys(C.friends).map(id => friendHtml(id)).join('')}</div>
         <button class="btn primary go-btn" data-act="go">오늘 수학<small>${esc(posLabel())}</small></button>
+        <button class="btn good drill-btn" data-act="drill">🧮 연산 연습<small>더하기 · 빼기 · 곱하기 · 나누기</small></button>
         <div class="home-links">
           <button class="btn" data-act="picker">🧭 단계 고르기</button>
           <button class="btn" data-act="stickers">📒 스티커북</button>
@@ -297,7 +300,7 @@
       </div>
     </div>`, {
       go: () => startLesson(S.pos.u, S.pos.d, S.pos.s),
-      picker: () => pickerScreen('units'),
+      picker: () => pickerScreen('units'), drill: () => drillScreen(),
       stickers: stickerScreen, ladder: ladderScreen, rewards: rewardScreen,
       parent: () => gateScreen(parentScreen),
       hello: () => { hush(); ko(`안녕, ${callName()}! 나는 ${robotName()}야.`); },
@@ -305,6 +308,55 @@
     });
   }
 
+
+  /* ================= 연산 연습 (v0.5.0, MREQ-39) =================
+     하루 공부와 따로, 원하는 연산을 골라 10문제씩 더 풀어요. 별 규칙·하루 50개·시간 제한은 그대로.
+     문제 종류는 content.js drill 에서 고쳐요. 같은 날 같은 회차는 ◀ 이전으로 돌아가도 같은 문제예요. */
+  function drillScreen(opId) {
+    const D = C.drill; const op = opId && D.ops.find(o => o.id === opId);
+    const dl = S.drill.date === today() ? S.drill : { n: 0 };
+    const body = !op
+      ? `<h2 class="title">🧮 어떤 연산을 연습할까?</h2>
+        <div class="grid drill-grid">${D.ops.map(o => `<button class="tile" data-act="op" data-arg="${o.id}"><span class="em">${o.icon}</span><b>${esc(o.name)}</b><small>${esc(o.sizes.map(z => z.name).join(' · '))}</small></button>`).join('')}</div>
+        <p class="muted" style="text-align:center">한 번에 ${D.count}문제 · 맞히면 별 1개 · 오늘 연산 연습 ${dl.n || 0}번</p>`
+      : `<h2 class="title">${op.icon} ${esc(op.name)} — 어떤 수로 할까?</h2>
+        <div class="grid drill-grid">${op.sizes.map(z => `<button class="tile" data-act="size" data-arg="${z.id}"><span class="em">${esc(z.em || op.icon)}</span><b>${esc(z.name)}</b><small>${esc(z.ex || '')}</small></button>`).join('')}</div>`;
+    render('drill', `<div class="screen">
+      <div class="topbar"><button class="icon-btn" data-act="back" aria-label="뒤로">⬅️</button><div class="spacer"></div><div class="stars">⭐ ${S.stars}</div><button class="icon-btn" data-act="home" aria-label="처음으로">🏠</button></div>
+      ${body}</div>`, {
+      back: () => (op ? drillScreen() : homeScreen()), home: homeScreen,
+      op: a => drillScreen(a), size: a => startDrill(op.id, a),
+    });
+    ko(op ? `${op.name}! 어떤 수로 할까?` : '어떤 연산을 연습할까?');
+  }
+  function startDrill(opId, sizeId) {
+    const lr = lockReason(); if (lr) return lockedScreen(lr);
+    const D = C.drill; const op = D.ops.find(o => o.id === opId); const sz = op && op.sizes.find(z => z.id === sizeId); if (!sz) return drillScreen();
+    if (S.drill.date !== today()) S.drill = Object.assign(S.drill, { date: today(), round: 0, n: 0 });
+    S.drill.round++; if (!S.days.includes(today())) S.days.push(today()); save();
+    const round = S.drill.round;
+    L = { drill: { op, sz, round }, u: S.pos.u, d: S.pos.d, s: 0, acts: [], i: 0, earned: 0, awarded: {}, first: {}, heard: {}, cache: {}, chal: { ok: 0, n: 0 }, flash: { ok: 0, n: 0 }, drillRes: { ok: 0, n: 0 } };
+    L.acts = Array.from({ length: D.count || 10 }, (_, i) => ({ type: 'prob', drill: true, prob: genProblem('calc', sz.p, `${today()}|drill|${op.id}|${sz.id}|${round}|${i}`, { concrete: false, eunhoo: false }) }));
+    L.cache[0] = L.acts;
+    showAct();
+  }
+  function drillDone() {
+    const { op, sz } = L.drill; const res = L.drillRes; S.drill.n++; S.drill.total = (S.drill.total || 0) + 1; save();
+    const great = res.n && res.ok / res.n >= 0.8;
+    render('reward', `<div class="screen"><div class="reward">
+      <div class="robot">${great ? '🏆' : '🤖'}</div>
+      <div class="bubble">연산 연습 끝! ${esc(op.name)} ${esc(sz.name)}<small>${res.n}문제 중 한 번에 ${res.ok}개 맞혔어요</small></div>
+      ${L.earned ? `<div class="big-stars">⭐ +${L.earned}</div>` : `<div class="bubble">오늘 별은 다 모았어요! ⭐<small>별은 하루에 ${DAY_STAR_MAX}개까지 받아요</small></div>`}
+      <div class="home-links">
+        <button class="btn primary" data-act="again">🔁 한 번 더</button>
+        <button class="btn" data-act="other">🧮 다른 연산</button>
+        <button class="btn" data-act="home">끝!</button>
+      </div>
+    </div></div>`, { again: () => startDrill(op.id, sz.id), other: () => drillScreen(), home: homeScreen });
+    if (great) confetti();
+    tone([523, 659, 784], 0.14);
+    ko(`연산 연습 끝! ${great ? '정말 잘했어!' : '끝까지 잘했어!'}`);
+  }
   /* ================= 단계 고르기 ================= */
   const doneCount = u => { const un = unitById(u); if (!un.ready) return 0; let n = 0; for (let d = 1; d <= un.days.length; d++) if (S.done[`${u}-${d}`]) n++; return n; };
   function parseCode(code) {
@@ -319,8 +371,8 @@
     let body = '';
     if (level === 'units') {
       body = `<h2 class="title">어떤 단원을 할까?</h2>
-        <div class="grid">${U.map((un, i) => `<button class="tile${un.ready ? '' : ' locked'}${S.pos.u === un.id ? ' now' : ''}" data-act="unit" data-arg="${un.id}">
-          <span class="em">${un.icon}</span><small>${un.sem}</small><b>${i + 1}. ${esc(un.title)}</b><small>${un.ready ? `${doneCount(un.id)} / ${un.days.length}일` : `준비 중 (${un.plan})`}</small></button>`).join('')}</div>
+        ${[...new Set(U.map(un => un.sem))].map(sem => `<h3 class="sem-h">${semName(sem)}</h3><div class="grid">${U.map((un, i) => un.sem !== sem ? '' : `<button class="tile${un.ready ? '' : ' locked'}${S.pos.u === un.id ? ' now' : ''}" data-act="unit" data-arg="${un.id}">
+          <span class="em">${un.icon}</span><small>${un.sem}</small><b>${i + 1}. ${esc(un.title)}</b><small>${un.ready ? `${doneCount(un.id)} / ${un.days.length}일` : `준비 중 (${un.plan})`}</small></button>`).join('')}</div>`).join('')}
         <div class="card code-row"><b>진도 코드</b><input id="code" inputmode="numeric" placeholder="예: 6-3"><button class="btn small primary" data-act="code">바로 가기</button>
           <span class="muted">단원-일차(-단계). 다른 기기에서 하던 곳부터 시작해요.</span></div>`;
     } else if (level === 'days') {
@@ -394,7 +446,7 @@
 
   /* ================= 문제 만들기 ================= */
   const ri = (r, a, b) => a + Math.floor(r() * (b - a + 1));
-  const opSign = op => (op === '+' ? '+' : '−');
+  const opSign = op => ({ '+': '+', '×': '×', '÷': '÷' }[op] || '−');
   function pickOp(r, op) { return op === 'mix' || !op ? (r() < 0.5 ? '+' : '-') : op; }
   function choicesFor(r, ans, extra = [], lo = 0, hi = 100) {
     const s = String(ans); const cands = [...extra, ans + 1, ans - 1, ans + 10, ans - 10];
@@ -409,7 +461,33 @@
     join: '모으기', split: '가르기', splitTen: '10으로 가르기', make10: '10 만들기', from10: '10에서 빼기',
     'small5': '5까지 덧셈·뺄셈', 'small+': '10까지 덧셈', 'small-': '10까지 뺄셈', three: '세 수의 계산', three10: '10을 만들어 세 수 더하기', tenPlus: '10과 몇',
     tens: '(몇십)±(몇십)', tensOnes: '(몇십)+(몇)', twoOne: '(몇십몇)±(몇)', two: '받아올림 없는 두 자리', carry: '받아올림 있는 덧셈', borrow: '받아내림 있는 뺄셈',
+    // v0.5.0: 2학년·연산 연습
+    carry21: '(두 자리)+(한 자리) 받아올림', carry22: '(두 자리)+(두 자리) 받아올림', borrow21: '(두 자리)−(한 자리) 받아내림', borrow22: '(두 자리)−(두 자리) 받아내림',
+    threeBig: '두 자리 세 수의 계산', blankAdd: '□가 있는 덧셈식', blankSub: '□가 있는 뺄셈식', 'd1+': '한 자리 덧셈', 'd1-': '한 자리 뺄셈',
+    'big2+': '두 자리 덧셈', 'big2-': '두 자리 뺄셈', 'big3+': '세 자리 덧셈', 'big3-': '세 자리 뺄셈', mulBlank: '곱셈구구 □ 구하기', mulBig: '(두 자리)×(한 자리)', divBig: '(두 자리)÷(한 자리)',
+    shapeName1: '모양 이름', shapeCorner1: '뾰족한 곳 세기', shapeCount1: '모양 세기', shapeName2: '도형 이름', shapeCorner2: '변·꼭짓점 세기', shapeCount2: '도형 세기',
+    clock60: '몇 시', clock30: '몇 시 30분', clock5: '몇 시 몇 분(5분)', clock1: '몇 시 몇 분(1분)', clockAfter: '몇 시간·몇 분 뒤', clockBefore: '몇 시 몇 분 전', clockMin: '시간과 분', clockDay: '하루·1주일·1년',
+    patShape: '무늬 규칙', patNum: '수의 규칙', patMul: '곱셈표 규칙',
+    bigHund: '백·천 알기', bigMake: '자릿값으로 수 만들기', bigPlace: '숫자가 나타내는 값', bigSkip: '뛰어 세기', bigCmp: '큰 수 비교', bigRead: '수로 쓰기',
+    lenRuler: '자로 길이 재기', lenMcm: 'm와 cm', lenAdd: '길이의 덧셈·뺄셈', sortCount: '분류해서 세기', sortMost: '가장 많은 것', chartCount: '그래프 읽기', chartMost: '그래프 가장 많은·적은 것', chartTotal: '표의 합계',
+    mulGroup: '묶어 세기', mulTimes: '몇의 몇 배', teach: '가르쳐주기',
   };
+  for (let k = 0; k <= 9; k++) { TYPE_LABEL['mul' + k] = `곱셈구구 ${k}단`; TYPE_LABEL['div' + k] = `나눗셈 (÷${k})`; }
+  // 세로셈처럼 자리마다 풀이 (두 자리·세 자리 덧셈·뺄셈)
+  const PLACE = ['일', '십', '백', '천'];
+  function columnSteps(a, b, op, ans) {
+    const out = []; const n = Math.max(String(a).length, String(b).length); let c = 0;
+    for (let k = 0; k < n; k++) {
+      const x = Math.floor(a / 10 ** k) % 10, y = Math.floor(b / 10 ** k) % 10; const nm = PLACE[k];
+      if (op === '+') {
+        const v = x + y + c; out.push(`${nm}의 자리: ${x}+${y}${c ? '+1' : ''}=${v}${v >= 10 && k < n - 1 ? ', 10은 받아올려요.' : ''}`); c = v >= 10 && k < n - 1 ? 1 : 0;
+      } else {
+        const x2 = x - c; if (x2 < y) { out.push(`${nm}의 자리: ${x2}에서 ${J(y, '을', '를')} 뺄 수 없어서 10을 받아내려요. ${x2 + 10}−${y}=${x2 + 10 - y}`); c = 1; }
+        else { out.push(`${nm}의 자리: ${c ? `${x}−1−${y}` : `${x}−${y}`}=${x2 - y}`); c = 0; }
+      }
+    }
+    out.push(`답은 ${ans}`); return out;
+  }
   // 계산 문제의 숫자 고르기 → {a, b, c?, op, op2?, ans, expr, kind, type}
   function makeCalc(r, p) {
     let kind = p.kind;
@@ -457,6 +535,54 @@
         break;
       case 'carry': a = ri(r, 2, 9); b = ri(r, Math.max(2, 11 - a), 9); ans = a + b; return { a, b, op: '+', ans, kind, type: 'carry', expr: `${a}+${b}=□` };
       case 'borrow': a = ri(r, 11, 18); b = ri(r, Math.max(a % 10 + 1, a - 9), 9); ans = a - b; return { a, b, op: '-', ans, kind, type: 'borrow', expr: `${a}−${b}=□` };
+      // ---- v0.5.0: 2학년 덧셈과 뺄셈 · 곱셈구구 · 나눗셈 · 연산 연습 ----
+      case 'carry2': { // 받아올림 있는 (두 자리)+(한/두 자리), p.big이면 합이 100을 넘어도 돼요
+        const one = p.one != null ? p.one : r() < 0.35; let ao, bo; do { ao = ri(r, 1, 9); bo = ri(r, 1, 9); } while (ao + bo < 10);
+        const at = ri(r, 1, p.big ? 9 : 7); const bt = one ? 0 : ri(r, 1, p.big ? 9 : Math.max(1, 8 - at));
+        a = at * 10 + ao; b = bt * 10 + bo; if (!one && r() < 0.3) [a, b] = [b, a];
+        return { a, b, op: '+', ans: a + b, kind, type: one ? 'carry21' : 'carry22', expr: `${a}+${b}=□` };
+      }
+      case 'borrow2': { // 받아내림 있는 (두 자리)−(한/두 자리)
+        const one = p.one != null ? p.one : r() < 0.35; let ao, bo; do { ao = ri(r, 0, 8); bo = ri(r, 1, 9); } while (ao >= bo);
+        const at = ri(r, 2, 9); const bt = one ? 0 : ri(r, 1, at - 1); a = at * 10 + ao; b = bt * 10 + bo;
+        return { a, b, op: '-', ans: a - b, kind, type: one ? 'borrow21' : 'borrow22', expr: `${a}−${b}=□` };
+      }
+      case 'threeBig': {
+        const o1 = pickOp(r, p.op), o2 = pickOp(r, p.op); let m;
+        do { a = ri(r, 12, 60); b = ri(r, 5, 39); c = ri(r, 5, 39); m = o1 === '+' ? a + b : a - b; ans = o2 === '+' ? m + c : m - c; } while (m < 0 || ans < 0 || ans > 99);
+        return { a, b, c, op: o1, op2: o2, ans, kind, type: 'threeBig', expr: `${a}${opSign(o1)}${b}${opSign(o2)}${c}=□`, mid: m };
+      }
+      case 'blank': { // □가 있는 식 (덧셈과 뺄셈의 관계)
+        const add = pickOp(r, p.op) === '+'; const x = ri(r, 3, 29);
+        if (add) { a = ri(r, 11, 60); c = a + x; return { a, b: x, c, op: '+', ans: x, kind, type: 'blankAdd', expr: `${a}+□=${c}`, blank: true }; }
+        a = ri(r, x + 5, Math.min(99, x + 60)); c = a - x; return { a, b: x, c, op: '-', ans: x, kind, type: 'blankSub', expr: `${a}−□=${c}`, blank: true };
+      }
+      case 'd1': // 한 자리 수끼리 (받아올림·받아내림 섞임)
+        if (op === '+') { a = ri(r, 1, 9); b = ri(r, 1, 9); ans = a + b; } else { a = ri(r, 2, 18); b = ri(r, Math.max(1, a - 9), Math.min(9, a)); ans = a - b; }
+        return { a, b, op, ans, kind, type: `d1${op}`, expr: `${a}${opSign(op)}${b}=□` };
+      case 'big2': // 두 자리 수끼리 (아무 수)
+        if (op === '+') { a = ri(r, 10, 99); b = ri(r, 10, 99); } else { a = ri(r, 20, 99); b = ri(r, 10, a - 1); }
+        return { a, b, op, ans: op === '+' ? a + b : a - b, kind, type: `big2${op}`, expr: `${a}${opSign(op)}${b}=□` };
+      case 'big3': // 세 자리 수끼리
+        if (op === '+') { a = ri(r, 100, 850); b = ri(r, 100, 999 - a); } else { a = ri(r, 200, 999); b = ri(r, 100, a - 50); }
+        return { a, b, op, ans: op === '+' ? a + b : a - b, kind, type: `big3${op}`, expr: `${a}${opSign(op)}${b}=□` };
+      case 'mul': { // 곱셈구구 (p.dans: 단 목록, p.bmin: 곱하는 수 최소)
+        a = pick(p.dans || [2, 3, 4, 5, 6, 7, 8, 9], r); b = ri(r, p.bmin != null ? p.bmin : 2, p.bmax || 9);
+        if (p.swap && r() < 0.3) return { a: b, b: a, op: '×', ans: a * b, kind, type: `mul${a}`, expr: `${b}×${a}=□`, dan: a };
+        return { a, b, op: '×', ans: a * b, kind, type: `mul${a}`, expr: `${a}×${b}=□`, dan: a };
+      }
+      case 'mulBlank': a = pick(p.dans || [2, 3, 4, 5, 6, 7, 8, 9], r); b = ri(r, 2, 9); return { a, b, c: a * b, op: '×', ans: b, kind, type: 'mulBlank', expr: `${a}×□=${a * b}`, blank: true };
+      case 'div': { // 나눗셈 (곱셈구구로): 전체 ÷ 나누는 수 = 몫
+        const d = pick(p.dans || [2, 3, 4, 5, 6, 7, 8, 9], r), qn = ri(r, 1, 9);
+        return { a: d * qn, b: d, op: '÷', ans: qn, kind, type: `div${d}`, expr: `${d * qn}÷${d}=□` };
+      }
+      case 'mul2': a = ri(r, 11, 49); b = ri(r, 2, 9); return { a, b, op: '×', ans: a * b, kind, type: 'mulBig', expr: `${a}×${b}=□` };
+      case 'div2': { const d = ri(r, 2, 9), qn = ri(r, 11, Math.floor(99 / d)); return { a: d * qn, b: d, op: '÷', ans: qn, kind, type: 'divBig', expr: `${d * qn}÷${d}=□` }; }
+      case 'mix4': { // 연산 연습 섞기: 더하기·빼기·곱하기·나누기
+        const lv1 = [{ kind: 'd1', op: '+' }, { kind: 'd1', op: '-' }, { kind: 'mul', dans: [2, 3, 4, 5] }, { kind: 'div', dans: [2, 3, 4, 5] }];
+        const lv2 = [{ kind: 'big2', op: '+' }, { kind: 'big2', op: '-' }, { kind: 'mul' }, { kind: 'div' }, { kind: 'big3', op: '+' }];
+        return makeCalc(r, pick(p.lv === 2 ? lv2 : lv1, r));
+      }
       default: a = 1; b = 1; ans = 2;
     }
     let type = kind;
@@ -472,7 +598,23 @@
       return [`${J(small, '을', '를')} ${J(need, '과', '와')} ${J(rest, '으로', '로')} 갈라요.`, `${big}+${need}=10`, `10+${rest}=${ans}`];
     }
     if (kind === 'borrow') { const o = a - 10; return [`${J(a, '을', '를')} 10과 ${J(o, '으로', '로')} 갈라요.`, `10−${b}=${10 - b}`, `${10 - b}+${o}=${ans}`]; }
-    if (kind === 'three') { const m = q.op === '+' ? a + b : a - b; return [`앞의 두 수부터: ${a}${opSign(q.op)}${b}=${m}`, `${m}${opSign(q.op2)}${c}=${ans}`]; }
+    if (['carry2', 'borrow2', 'd1', 'big2', 'big3'].includes(kind)) {
+      if (kind === 'd1' && q.op === '+' && ans >= 10) { const big = Math.max(a, b), small = Math.min(a, b), need = 10 - big; return [`${J(small, '을', '를')} ${need}${josa(need, '과', '와')} ${J(small - need, '으로', '로')} 갈라요.`, `${big}+${need}=10`, `10+${small - need}=${ans}`]; }
+      if (kind === 'd1' && q.op === '-' && a >= 10) { const o = a - 10; return [`${J(a, '을', '를')} 10과 ${J(o, '으로', '로')} 갈라요.`, `10−${b}=${10 - b}`, `${10 - b}+${o}=${ans}`]; }
+      if (kind === 'd1') return [`${a}${opSign(q.op)}${b}=${ans}`];
+      return columnSteps(a, b, q.op, ans);
+    }
+    if (kind === 'blank') return q.op === '+' ? [`${J(q.c, '에서', '에서')} ${J(a, '을', '를')} 빼면 □를 알 수 있어요.`, `${q.c}−${a}=${ans}`] : [`${J(a, '에서', '에서')} ${J(q.c, '을', '를')} 빼면 □를 알 수 있어요.`, `${a}−${q.c}=${ans}`];
+    if (kind === 'mul') {
+      const d = q.dan, m = d === a ? b : a;
+      if (d === 0 || m === 0) return ['0에 어떤 수를 곱해도, 어떤 수에 0을 곱해도 0이에요.', `${a}×${b}=0`];
+      if (d === 1) return [`1에 어떤 수를 곱하면 그 수가 돼요.`, `${a}×${b}=${ans}`];
+      return [`${d}씩 ${m}묶음이에요.`, `${d}단: ${Array.from({ length: m }, (_, k) => d * (k + 1)).join(', ')}`, `${a}×${b}=${ans}`];
+    }
+    if (kind === 'mulBlank') return [`${a}단에서 ${J(q.c, '을', '를')} 찾아봐요.`, `${a}×${ans}=${q.c}`];
+    if (kind === 'div' || kind === 'div2') return [`${b}×□=${a}${josa(a, '을', '를')} 생각해요.`, `${b}×${ans}=${a}`, `그래서 ${a}÷${b}=${ans}`];
+    if (kind === 'mul2') { const t = a - a % 10, o = a % 10; return [`${t}×${b}=${t * b}`, `${o}×${b}=${o * b}`, `${t * b}+${o * b}=${ans}`]; }
+    if (kind === 'three' || kind === 'threeBig') { const m = q.op === '+' ? a + b : a - b; return [`앞의 두 수부터: ${a}${opSign(q.op)}${b}=${m}`, `${m}${opSign(q.op2)}${c}=${ans}`]; }
     if (kind === 'three10') return [`${q.ten[0]}+${q.ten[1]}=10을 먼저 만들어요.`, `10+${q.rest}=${ans}`];
     if (kind === 'make10') return [`${J(a, '과', '와')} ${J(b, '을', '를')} 모으면 10이에요.`, `${a}+${b}=10`];
     if (kind === 'from10') return [`10칸 상자에서 ${b}개를 빼면 ${ans}개가 남아요.`, `10−${b}=${ans}`];
@@ -488,15 +630,74 @@
       carry: '10을 먼저 만들어 봐요!', borrow: '10에서 먼저 빼 봐요!', three: '앞의 두 수부터 계산해요.', three10: '더해서 10이 되는 두 수를 찾아봐요!',
       make10: '빈 칸을 세어 봐요.', from10: '10칸 상자에서 빼 봐요.', tenPlus: '10과 몇을 생각해요.',
       two: '십의 자리끼리, 일의 자리끼리!', twoOne: '일의 자리끼리 계산해요.', tens: '10개씩 묶음끼리 계산해요.', tensOnes: '몇십과 몇을 모아요.',
+      carry2: '일의 자리끼리 더해서 10이 넘으면 받아올려요!', borrow2: '일의 자리끼리 뺄 수 없으면 십의 자리에서 10을 받아내려요!', threeBig: '앞의 두 수부터 계산해요.',
+      blank: '덧셈과 뺄셈의 관계를 생각해요.', d1: '10을 만들어 생각해 봐요.', big2: '같은 자리끼리 계산해요.', big3: '일의 자리부터 같은 자리끼리 계산해요.',
+      mul: `${q.dan}단을 외워 봐요!`, mulBlank: `${q.a}단을 외워 봐요!`, div: '곱셈구구로 생각해요!', div2: '곱셈으로 생각해요!', mul2: '십의 자리와 일의 자리를 따로 곱해요.',
     }[q.kind] || '구슬을 하나씩 세어 봐요.';
   }
   const TWO_DIGIT = ['two', 'twoOne', 'tens', 'tensOnes'];
   function calcVis(q) {
+    if (q.kind === 'mul' && q.a <= 9 && q.b <= 9 && q.a && q.b) return { kind: 'groups', size: q.dan, n: q.dan === q.a ? q.b : q.a };
+    if (q.kind === 'mulBlank') return { kind: 'groups', size: q.a, n: q.ans };
+    if (q.kind === 'div') return { kind: 'groups', size: q.b, n: q.ans, share: true };
+    if (['mul', 'mul2', 'div2', 'big3', 'threeBig', 'blank'].includes(q.kind) || q.ans > 99 || q.a > 99) return null;
+    if (['carry2', 'borrow2', 'big2'].includes(q.kind)) return { kind: 'base', a: q.a, b: q.b, op: q.op };
+    if (q.kind === 'd1') return q.op === '+' ? { kind: 'frames', parts: [q.a, q.b] } : { kind: 'frames', parts: [q.a], x: q.b };
     if (TWO_DIGIT.includes(q.kind)) return { kind: 'base', a: q.a, b: q.b, op: q.op };
     if (q.kind === 'make10') return { kind: 'frames', parts: [q.a], cap: 10 };
     if (q.kind === 'three' || q.kind === 'three10') { if (q.op === '+' && q.op2 === '+') return { kind: 'frames', parts: [q.a, q.b, q.c] }; if (q.op === '-' && q.op2 === '-') return { kind: 'frames', parts: [q.a], x: q.b + q.c }; return null; }
     if (q.op === '+') return { kind: 'frames', parts: [q.a, q.b] };
     return { kind: 'frames', parts: [q.a], x: q.b };
+  }
+
+  /* ---------- v0.5.0 그림 도우미: 모양·시계·자 (SVG) ---------- */
+  const SHAPES1 = [{ n: '네모', k: 4, d: '곧은 선 4개, 뾰족한 곳 4군데' }, { n: '세모', k: 3, d: '곧은 선 3개, 뾰족한 곳 3군데' }, { n: '동그라미', k: 0, d: '뾰족한 곳이 없고 둥글어요' }];
+  const SHAPES2 = [{ n: '원', k: 0, d: '곧은 선도 꼭짓점도 없고 둥글어요' }, { n: '삼각형', k: 3, d: '변 3개, 꼭짓점 3개' }, { n: '사각형', k: 4, d: '변 4개, 꼭짓점 4개' }, { n: '오각형', k: 5, d: '변 5개, 꼭짓점 5개' }, { n: '육각형', k: 6, d: '변 6개, 꼭짓점 6개' }];
+  const SH_COLORS = ['#22a06b', '#3b82f6', '#f59e0b', '#ef6f9b', '#8b5cf6', '#06b6d4'];
+  function shapeSvg(k, r, size) {
+    const col = pick(SH_COLORS, r); const st = `fill="${col}" fill-opacity=".85" stroke="#334" stroke-width="3" stroke-linejoin="round"`;
+    let body;
+    if (!k) { const rx = 36 + ri(r, 0, 6), ry = rx; body = `<ellipse cx="50" cy="50" rx="${rx}" ry="${ry}" ${st}/>`; }
+    else if (k === 4 && r() < 0.6) { const w = ri(r, 44, 84), h = ri(r, 40, 80), rot = pick([0, 0, 15, -20, 45], r); body = `<rect x="${50 - w / 2}" y="${50 - h / 2}" width="${w}" height="${h}" transform="rotate(${rot} 50 50)" ${st}/>`; }
+    else {
+      const rot = r() * 360, jit = k === 3 ? 10 : 3;
+      const pts = Array.from({ length: k }, (_, i) => { const t = (rot + i * 360 / k) * Math.PI / 180, rr = 40 - r() * jit; return `${(50 + rr * Math.cos(t)).toFixed(1)},${(50 + rr * Math.sin(t)).toFixed(1)}`; }).join(' ');
+      body = `<polygon points="${pts}" ${st}/>`;
+    }
+    return `<svg class="shp" viewBox="0 0 100 100" width="${size}" height="${size}" aria-hidden="true">${body}</svg>`;
+  }
+  const tlabel = (h, m) => (m ? `${h}시 ${m}분` : `${h}시`);
+  function clockChoices(r, h, m, step) {
+    const hh = x => (x + 11) % 12 + 1; const c = [];
+    if (step >= 60) c.push([hh(h + 1), m], [hh(h - 1), m], [hh(h + 2), m]);
+    if (step === 30) c.push([hh(h + 1), m], [h, m ? 0 : 30], [hh(h + 1), m ? 0 : 30], [hh(h - 1), m]);
+    if (step <= 5) { const mm = x => (x + 60) % 60; c.push([h, mm(m + 5)], [h, mm(m - 5)], [hh(h + 1), m]); if (m % 5 === 0 && m / 5 !== h) c.push([hh(m / 5) , (h * 5) % 60]); c.push([h, mm(m + 10)]); if (step === 1) c.unshift([h, mm(m + 1)], [h, mm(m - 1)]); }
+    const out = []; for (const [x, y] of c) { const l = tlabel(x, y); if (l !== tlabel(h, m) && !out.includes(l)) out.push(l); }
+    return shuffle([tlabel(h, m), ...out.slice(0, 3)], r);
+  }
+  function clockSvg(h, m, ticks) {
+    const nums = Array.from({ length: 12 }, (_, i) => { const t = (i + 1) * 30 * Math.PI / 180; return `<text x="${(100 + 74 * Math.sin(t)).toFixed(1)}" y="${(100 - 74 * Math.cos(t) + 8).toFixed(1)}" text-anchor="middle" font-size="22" font-weight="800" fill="#223">${i + 1}</text>`; }).join('');
+    const tk = Array.from({ length: 60 }, (_, i) => { const t = i * 6 * Math.PI / 180, big = i % 5 === 0; if (!ticks && !big) return ''; const r1 = big ? 86 : 89; return `<line x1="${(100 + r1 * Math.sin(t)).toFixed(1)}" y1="${(100 - r1 * Math.cos(t)).toFixed(1)}" x2="${(100 + 94 * Math.sin(t)).toFixed(1)}" y2="${(100 - 94 * Math.cos(t)).toFixed(1)}" stroke="#556" stroke-width="${big ? 3 : 1.5}"/>`; }).join('');
+    const ha = ((h % 12) + m / 60) * 30, ma = m * 6;
+    return `<svg class="clock" viewBox="0 0 200 200" width="230" height="230" role="img" aria-label="시계"><circle cx="100" cy="100" r="96" fill="#fff" stroke="#22a06b" stroke-width="6"/>${tk}${nums}
+      <line x1="100" y1="100" x2="100" y2="48" stroke="#e8590c" stroke-width="8" stroke-linecap="round" transform="rotate(${ha} 100 100)"/>
+      <line x1="100" y1="100" x2="100" y2="24" stroke="#1d4ed8" stroke-width="5" stroke-linecap="round" transform="rotate(${ma} 100 100)"/><circle cx="100" cy="100" r="6" fill="#223"/></svg>`;
+  }
+  function rulerSvg(s0, n) {
+    const L = 14, W = 30; let tk = '';
+    for (let i = 0; i <= L * 2; i++) { const x = 10 + i * W / 2; const big = i % 2 === 0; tk += `<line x1="${x}" y1="70" x2="${x}" y2="${big ? 50 : 60}" stroke="#334" stroke-width="${big ? 2 : 1}"/>${big ? `<text x="${x}" y="90" text-anchor="middle" font-size="13" font-weight="700" fill="#334">${i / 2}</text>` : ''}`; }
+    return `<svg class="ruler" viewBox="0 0 ${L * W + 20} 100" width="${L * W + 20}" height="100" role="img" aria-label="자"><rect x="${10 + s0 * W}" y="14" width="${n * W}" height="26" rx="10" fill="#f59e0b" stroke="#b45309" stroke-width="2"/>
+      <rect x="2" y="44" width="${L * W + 16}" height="52" rx="6" fill="#fff8dc" stroke="#caa" stroke-width="1.5"/>${tk}</svg>`;
+  }
+  // 곱셈·나눗셈 이야기 문제 (content.js stories.mul / stories.div)
+  function storyMulDiv(r, q) {
+    const mul = q.op === '×'; const tpl = pick(mul ? C.stories.mul : C.stories.div, r);
+    const fid0 = pick(['hyun', 'chorok', 'eunhoo'], r); const fid = tpl.text.includes('{F}') ? fid0 : null; const f = C.friends[fid0];
+    const text = tpl.text.replace(/\{F\}/g, f.subj).replace('{a}', q.a).replace('{b}', q.b);
+    const expr = `${q.a}${opSign(q.op)}${q.b}=□`;
+    return { mode: 6, input: 'pad', q: text, answer: q.ans, calc: q, friend: fid, unit: tpl.unit, pic: tpl.pic, expr: '', storyExpr: expr,
+      vis: mul ? { kind: 'groups', size: q.a, n: q.b, emoji: tpl.pic } : { kind: 'groups', size: q.a, n: 1, emoji: tpl.pic }, type: q.type,
+      hint1: `${mul ? '똑같은 수가 여러 묶음이니까 곱하기' : '똑같이 나누니까 나누기'}예요. 식: ${expr}`, steps: [expr.replace('□', q.ans), ...calcSteps(q).slice(0, 2)] };
   }
   const GEN = {
     countTens(r) {
@@ -557,12 +758,13 @@
     },
     calc(r, p = {}, ctx = {}) {
       const q = makeCalc(r, p);
-      const concrete = ctx.concrete !== false;
+      const concrete = ctx.concrete !== false && !['div', 'div2', 'blank'].includes(q.kind);
       return { mode: 5, input: 'pad', q: q.blank ? '빈칸에 알맞은 수는?' : '계산해 봐요', expr: q.expr, answer: q.ans, calc: q, vis: calcVis(q), showVis: concrete, type: q.type,
         hint1: calcHint(q), steps: calcSteps(q) };
     },
     story(r, p = {}) {
-      const q = makeCalc(r, { ...p, op: p.kind === 'carry' ? '+' : p.kind === 'borrow' || p.kind === 'from10' ? '-' : p.op });
+      const q = makeCalc(r, { ...p, swap: false, op: p.kind === 'carry' ? '+' : p.kind === 'borrow' || p.kind === 'from10' ? '-' : p.op });
+      if (q.op === '×' || q.op === '÷') return storyMulDiv(r, q);
       const add = q.op === '+'; const tpl = pick(add ? C.stories.add : C.stories.sub, r);
       const fid0 = pick(['hyun', 'chorok', 'eunhoo'], r); const fid = tpl.text.includes('{F}') ? fid0 : null; const f = C.friends[fid0];
       const text = tpl.text.replace(/\{F\}/g, f.subj).replace('{a}', q.a).replace('{b}', q.b);
@@ -570,6 +772,171 @@
       return { mode: 6, input: 'pad', q: text, answer: q.ans, calc: q, friend: fid, unit: tpl.unit, pic: tpl.pic, expr: '', storyExpr: expr,
         vis: { kind: 'items', a: q.a, b: q.b, op: q.op, emoji: tpl.pic }, type: q.type,
         hint1: `${add ? '모두 몇? 이니까 더하기' : '남은 것은? 이니까 빼기'}예요. 식: ${expr}`, steps: [expr.replace('□', q.ans), ...calcSteps(q).slice(0, 2)] };
+    },
+
+    /* ---------- v0.5.0: 모양·시계·규칙·큰 수·길이·분류·곱셈 ---------- */
+    shape(r, p = {}) {
+      const lv = p.level || 1; const set = lv === 1 ? SHAPES1 : SHAPES2; const ask = p.ask || 'name';
+      if (ask === 'count') {
+        const n = ri(r, 6, 9); const list = Array.from({ length: n }, () => pick(set, r)); let tgt = pick(set, r);
+        if (!list.includes(tgt)) list[ri(r, 0, n - 1)] = tgt;
+        const cnt = list.filter(x => x === tgt).length; const svgs = list.map(sh => shapeSvg(sh.k, r, 64));
+        return { mode: 7, input: 'pad', q: `${tgt.n}${josa(tgt.n, '은', '는')} 몇 개일까요?`, answer: cnt, vis: { kind: 'shapes', svgs, mark: list.map(x => x === tgt) }, type: `shapeCount${lv}`,
+          hint1: `${tgt.n}${josa(tgt.n, '을', '를')} 하나씩 손가락으로 짚으며 세어 봐요.`, steps: [`${tgt.n}: ${tgt.d}`, `${tgt.n}${josa(tgt.n, '은', '는')} ${cnt}개예요.`] };
+      }
+      const sh = ask === 'corner' ? pick(set.filter(x => lv === 1 || x.k), r) : pick(set, r);
+      const svg = shapeSvg(sh.k, r, 150);
+      if (ask === 'corner') {
+        const what = lv === 1 ? '뾰족한 곳' : pick(['변', '꼭짓점'], r); const unitW = lv === 1 ? '군데' : '개';
+        return { mode: 7, input: 'pad', q: `이 모양에서 ${what}${josa(what, '은', '는')} 몇 ${unitW}일까요?`, answer: sh.k, vis: { kind: 'svg', svg }, type: `shapeCorner${lv}`, unit: unitW,
+          hint1: lv === 1 ? '뾰족한 곳을 하나씩 눌러 보듯이 세어 봐요.' : what === '변' ? '변은 곧은 선이에요. 하나씩 세어 봐요.' : '꼭짓점은 두 변이 만나는 뾰족한 점이에요.',
+          steps: [sh.k ? `${sh.n}${josa(sh.n, '은', '는')} ${what}${josa(what, '이', '가')} ${sh.k}${unitW === '개' ? '개' : '군데'}예요.` : `${sh.n}${josa(sh.n, '은', '는')} 뾰족한 곳이 없어요.`, `정답은 ${sh.k}`] };
+      }
+      const choices = shuffle([sh.n, ...shuffle(set.filter(x => x !== sh).map(x => x.n), r).slice(0, 3)], r);
+      return { mode: 7, input: 'choice', q: lv === 1 ? '이 모양은 어떤 모양일까요?' : '이 도형의 이름은 무엇일까요?', answer: sh.n, choices, vis: { kind: 'svg', svg }, type: `shapeName${lv}`,
+        hint1: lv === 1 ? '뾰족한 곳이 있는지, 둥근지 살펴봐요.' : '변과 꼭짓점이 몇 개인지 세어 봐요.', steps: [`${sh.n}: ${sh.d}`, `그래서 ${sh.n}${josa(sh.n, '이에요', '예요')}.`] };
+    },
+    clock(r, p = {}) {
+      const ask = p.ask || 'read'; const step = p.step || 60;
+      const h = ri(r, 1, 12); let m = step === 60 ? 0 : step === 30 ? (r() < 0.75 ? 30 : 0) : step === 5 ? 5 * ri(r, 1, 11) : ri(r, 1, 59);
+      if (step === 1 && m % 5 === 0) m += 1 + Math.floor(r() * 3);
+      if (ask === 'min') { // 1시간 20분 = 몇 분
+        const hh = ri(r, 1, 2), mm = 5 * ri(r, 1, 11); const ans = hh * 60 + mm;
+        return { mode: 8, input: 'pad', q: `${hh}시간 ${mm}분은 몇 분일까요?`, answer: ans, type: 'clockMin', unit: '분', vis: null,
+          hint1: '1시간은 60분이에요.', steps: [`${hh}시간=${hh * 60}분`, `${hh * 60}분+${mm}분=${ans}분`] };
+      }
+      if (ask === 'day') {
+        const qs = [['하루는 몇 시간일까요?', 24, '시간', '오전 12시간과 오후 12시간이에요.'], ['1주일은 며칠일까요?', 7, '일', '일요일부터 토요일까지 세어 봐요.'], ['1년은 몇 개월일까요?', 12, '개월', '1월부터 12월까지 세어 봐요.'],
+          ['1시간은 몇 분일까요?', 60, '분', '긴바늘이 한 바퀴 도는 데 60분이 걸려요.'], ['2주일은 며칠일까요?', 14, '일', '1주일은 7일이에요. 7+7=14'], ['이틀은 몇 시간일까요?', 48, '시간', '하루는 24시간이에요. 24+24=48']];
+        const [q, ans, u, hint] = pick(qs, r);
+        return { mode: 8, input: 'pad', q, answer: ans, type: 'clockDay', vis: null, hint1: hint, steps: [hint, `정답은 ${ans}`] };
+      }
+      if (ask === 'before') { // 2시 50분은 3시 몇 분 전
+        const mm = 5 * ri(r, 7, 11); const ans = 60 - mm; const nh = h % 12 + 1;
+        return { mode: 8, input: 'pad', q: `${h}시 ${mm}분은 ${nh}시 몇 분 전일까요?`, answer: ans, type: 'clockBefore', unit: '분', vis: { kind: 'svg', svg: clockSvg(h, mm, true) },
+          hint1: `${nh}시가 되려면 몇 분이 더 있어야 할까요?`, steps: [`${h}시 ${mm}분에서 ${ans}분이 지나면 ${nh}시`, `그래서 ${nh}시 ${ans}분 전`] };
+      }
+      if (ask === 'after') { // 몇 시간 뒤·몇 분 뒤
+        const hours = step >= 30; const add = hours ? ri(r, 1, 4) : 5 * ri(r, 2, 8);
+        const t0 = h * 60 + m, t1 = t0 + (hours ? add * 60 : add); const h1 = (Math.floor(t1 / 60) - 1) % 12 + 1, m1 = t1 % 60;
+        const ans = tlabel(h1, m1); const choices = clockChoices(r, h1, m1, hours ? 60 : 5); const now = tlabel(h, m);
+        return { mode: 8, input: 'choice', q: `지금은 ${now}${josa(now, '이에요', '예요')}. ${hours ? `${add}시간` : `${add}분`} 뒤는 몇 시${m1 ? ' 몇 분' : ''}일까요?`, answer: ans, choices, type: 'clockAfter',
+          vis: { kind: 'svg', svg: clockSvg(h, m, step < 30) }, hint1: hours ? '짧은바늘이 한 칸 가면 1시간이에요.' : '긴바늘이 작은 눈금 한 칸 가면 1분, 숫자 한 칸 가면 5분이에요.',
+          steps: [`${tlabel(h, m)}에서 ${hours ? `${add}시간` : `${add}분`} 뒤`, `정답은 ${ans}`] };
+      }
+      const ans = tlabel(h, m); const choices = clockChoices(r, h, m, step);
+      const mSay = m === 0 ? '긴바늘이 12를 가리키면 정각이에요.' : m % 5 === 0 ? `긴바늘이 ${J(m / 5, '을', '를')} 가리키면 ${m}분이에요.` : `긴바늘이 ${Math.floor(m / 5) || 12}에서 작은 눈금 ${m % 5}칸 더 가서 ${m}분이에요.`;
+      return { mode: 8, input: 'choice', q: '시계가 가리키는 시각은 몇 시 몇 분일까요?'.replace(' 몇 분', step === 60 ? '' : ' 몇 분'), answer: ans, choices, vis: { kind: 'svg', svg: clockSvg(h, m, step < 30) }, type: `clock${step}`,
+        hint1: '짧은바늘은 시, 긴바늘은 분을 알려 줘요.', steps: [`짧은바늘을 보면 ${h}시${m ? ` (${J(h, '과', '와')} ${h % 12 + 1} 사이)` : ''}`, mSay, `정답은 ${ans}`] };
+    },
+    pattern(r, p = {}) {
+      const kind = p.kind || 'shape';
+      if (kind === 'shape') {
+        const pool = shuffle(C.patternThings || [['🐞', '무당벌레']], r); const shapes = p.abc ? ['AB', 'ABC', 'AAB', 'ABB', 'ABCC'] : ['AB', 'AAB', 'ABB'];
+        const pat = pick(shapes, r); const letters = [...new Set(pat)]; const map = {}; letters.forEach((L, i) => { map[L] = pool[i]; });
+        const unit = [...pat].map(L => map[L]); const len = unit.length * 2 + ri(r, 1, unit.length); const seq = Array.from({ length: len + 1 }, (_, i) => unit[i % unit.length]);
+        const ans = seq[len]; const choices = shuffle([...new Set([...letters.map(L => map[L][0]), pool[letters.length][0]])], r).slice(0, 4);
+        if (!choices.includes(ans[0])) choices[0] = ans[0];
+        return { mode: 9, input: 'choice', q: '규칙에 따라 빈칸에 올 것은 무엇일까요?', answer: ans[0], sayAns: ans[1], choices: shuffle(choices, r), vis: { kind: 'seq', items: seq.slice(0, len).map(x => x[0]) }, type: 'patShape',
+          hint1: '되풀이되는 부분을 찾아봐요.', steps: [`되풀이되는 부분: ${unit.map(x => x[1]).join(', ')}`, `그래서 빈칸은 ${ans[1]}`] };
+      }
+      if (kind === 'mul') {
+        const d = pick(p.dans || [2, 3, 4, 5, 6, 7, 8, 9], r);
+        return { mode: 9, input: 'pad', q: `곱셈표에서 ${d}단의 곱은 몇씩 커질까요?`, answer: d, vis: { kind: 'line', nums: [d, d * 2, d * 3, d * 4, d * 5] }, type: 'patMul',
+          hint1: '이웃한 두 수의 차를 구해 봐요.', steps: [`${d * 2}−${d}=${d}`, `${d}단은 ${d}씩 커져요.`] };
+      }
+      // 수의 규칙: 몇씩 커지거나 작아지는 수 (빈칸)
+      const d = p.step || pick(p.steps || [2, 5, 10], r); const down = p.down != null ? p.down : r() < 0.3; const n = 5;
+      const start = down ? ri(r, d * n, Math.min(p.max || 99, d * n + 40)) : ri(r, 1, Math.max(1, (p.max || 99) - d * n));
+      const nums = Array.from({ length: n }, (_, i) => start + (down ? -i : i) * d); const bi = r() < 0.6 ? n - 1 : ri(r, 1, n - 2); const ans = nums[bi];
+      return { mode: 9, input: 'pad', q: '규칙에 맞게 빈칸에 알맞은 수를 넣어요.', sub: p.sub || '', answer: ans, vis: { kind: 'line', nums, blank: bi }, type: 'patNum',
+        hint1: '앞의 수와 뒤의 수를 비교해 봐요. 몇씩 달라지나요?', steps: [`${d}씩 ${down ? '작아지는' : '커지는'} 규칙이에요.`, `${nums[bi - 1]}${down ? '−' : '+'}${d}=${ans}`] };
+    },
+    bigNum(r, p = {}) {
+      const dg = p.digits || 3; const ask = p.ask || 'make'; const top = 10 ** (dg - 1);
+      const rnd = () => { let v; do { v = ri(r, top, top * 10 - 1); } while (p.noZero && String(v).includes('0')); return v; };
+      if (ask === 'hund') {
+        const qs = dg === 3 ? [() => { const k = ri(r, 2, 9); return [`100이 ${k}개이면 얼마일까요?`, k * 100, `100이 ${k}개이면 ${k * 100}`]; }, () => [`10이 10개이면 얼마일까요?`, 100, '10이 10개이면 100'], () => [`99보다 1 큰 수는 얼마일까요?`, 100, '99 다음 수는 100'], () => [`90보다 10 큰 수는 얼마일까요?`, 100, '90+10=100']]
+          : [() => { const k = ri(r, 2, 9); return [`1000이 ${k}개이면 얼마일까요?`, k * 1000, `1000이 ${k}개이면 ${k * 1000}`]; }, () => [`100이 10개이면 얼마일까요?`, 1000, '100이 10개이면 1000'], () => [`999보다 1 큰 수는 얼마일까요?`, 1000, '999 다음 수는 1000'], () => [`900보다 100 큰 수는 얼마일까요?`, 1000, '900+100=1000']];
+        const [q, ans, st] = pick(qs, r)();
+        return { mode: 10, input: 'pad', q, answer: ans, vis: null, type: 'bigHund', hint1: dg === 3 ? '10개씩 묶음 10개가 100이에요.' : '100이 10개 모이면 1000이에요.', steps: [st, `정답은 ${ans}`] };
+      }
+      if (ask === 'make') {
+        const v = rnd(); const ds = String(v).split('').map(Number); const units = [1000, 100, 10, 1].slice(4 - dg);
+        const txt = ds.map((d, i) => `${units[i]}이 ${d}개`).join(', ');
+        return { mode: 10, input: 'pad', q: `${txt}이면 얼마일까요?`, answer: v, vis: { kind: 'places', ds, units }, type: 'bigMake',
+          hint1: '자리마다 숫자를 차례로 써요. 0개인 자리는 0을 써요.', steps: ds.map((d, i) => `${PLACE[dg - 1 - i]}의 자리 숫자 ${d}`).concat([`그래서 ${v}`]) };
+      }
+      if (ask === 'place') {
+        let v, pos, d; do { v = rnd(); pos = ri(r, 0, dg - 1); d = Math.floor(v / 10 ** pos) % 10; } while (!d || String(v).split(String(d)).length !== 2);
+        const val = d * 10 ** pos; const choices = shuffle(Array.from({ length: dg }, (_, k) => d * 10 ** k), r);
+        return { mode: 10, input: 'choice', q: `${v}에서 숫자 ${J(d, '은', '는')} 얼마를 나타낼까요?`, answer: val, choices, vis: { kind: 'placeTable', v, hi: pos, dg }, type: 'bigPlace',
+          hint1: '숫자가 어느 자리에 있는지 봐요.', steps: [`${d}${josa(d, '은', '는')} ${PLACE[pos]}의 자리 숫자예요.`, `그래서 ${val}${josa(val, '을', '를')} 나타내요.`] };
+      }
+      if (ask === 'skip') {
+        const st = pick(p.steps || (dg === 3 ? [1, 10, 100] : [10, 100, 1000]), r); let start = ri(r, top, top * 10 - 1 - st * 4); if (st >= 100) start = start - start % 10;
+        const nums = [0, 1, 2, 3].map(k => start + k * st); const bi = ri(r, 1, 3); const ans = nums[bi];
+        return { mode: 10, input: 'choice', q: `${st}씩 뛰어 세어요. 빈칸에 알맞은 수는?`, answer: ans, choices: shuffle([...new Set([ans, ans + st, ans - st, ans + (st === 1 ? 10 : st / 10), ans - (st === 1 ? 10 : st / 10)])].filter(x => x !== ans).slice(0, 3).concat(ans), r), vis: { kind: 'line', nums, blank: bi }, type: 'bigSkip',
+          hint1: `${st}씩 뛰어 세면 ${PLACE[String(st).length - 1]}의 자리 숫자가 1씩 커져요.`, steps: [`${nums[bi - 1]}보다 ${st} 큰 수`, `정답은 ${ans}`] };
+      }
+      if (ask === 'cmp') {
+        const a = rnd(); let b; const k = ri(r, 0, dg - 2); // 앞의 k자리는 같게
+        do { const lead = Math.floor(a / 10 ** (dg - k)); b = lead * 10 ** (dg - k) + ri(r, k ? 0 : top, 10 ** (dg - k) - 1); } while (b === a || b < top);
+        const big = r() < 0.7; const ans = big ? Math.max(a, b) : Math.min(a, b);
+        let pos = dg - 1; while (pos > 0 && Math.floor(a / 10 ** pos) % 10 === Math.floor(b / 10 ** pos) % 10) pos--;
+        return { mode: 10, input: 'choice', two: true, q: big ? '더 큰 수는?' : '더 작은 수는?', answer: ans, choices: [a, b], vis: null, type: 'bigCmp',
+          hint1: '높은 자리 숫자부터 차례로 비교해요.', steps: [`${PLACE[pos]}의 자리 숫자가 달라요: ${Math.floor(a / 10 ** pos) % 10}, ${Math.floor(b / 10 ** pos) % 10}`, `그래서 ${J(ans, '이', '가')} 더 ${big ? '커요' : '작아요'}.`] };
+      }
+      // read: "삼백오를 수로 쓰면?"
+      let v; do { v = rnd(); } while (!String(v).includes('0') && r() < 0.6);
+      const word = sino(v);
+      return { mode: 10, input: 'pad', q: `${word}${josa(word, '을', '를')} 수로 쓰면 얼마일까요?`, answer: v, vis: null, type: 'bigRead',
+        hint1: '읽지 않은 자리에는 0을 써요.', steps: String(v).split('').map((d, i) => `${PLACE[dg - 1 - i]}의 자리: ${d}`).concat([`그래서 ${v}`]) };
+    },
+    length(r, p = {}) {
+      const ask = p.ask || 'ruler';
+      if (ask === 'ruler') {
+        const n = ri(r, 2, p.max || 10); const s0 = p.shift ? ri(r, 1, 12 - n) : 0; const em = pick(['✏️', '🐛', '🖍️', '🥕', '🐍', '🐟'], r);
+        return { mode: 11, input: 'pad', q: `${em} 길이는 몇 cm일까요?`, answer: n, unit: 'cm', vis: { kind: 'svg', svg: rulerSvg(s0, n) }, type: 'lenRuler',
+          hint1: s0 ? `0이 아닌 ${s0}에서 시작해요. 1cm가 몇 번인지 세어 봐요.` : '끝이 가리키는 눈금을 읽어요.', steps: s0 ? [`${s0}부터 ${s0 + n}까지`, `1cm가 ${n}번이니까 ${n}cm`] : [`0부터 ${n}까지`, `${n}cm`] };
+      }
+      if (ask === 'mcm') {
+        const mm = ri(r, 1, 4), cc = ri(r, 1, 99); const tot = mm * 100 + cc;
+        if (r() < 0.5) return { mode: 11, input: 'pad', q: `${mm}m ${cc}cm는 몇 cm일까요?`, answer: tot, unit: 'cm', vis: null, type: 'lenMcm', hint1: '1m는 100cm예요.', steps: [`${mm}m=${mm * 100}cm`, `${mm * 100}cm+${cc}cm=${tot}cm`] };
+        return { mode: 11, input: 'pad', q: '빈칸에 알맞은 수를 넣어요.', expr: `${tot}cm=□m ${cc}cm`, answer: mm, unit: 'm', vis: null, type: 'lenMcm', hint1: '100cm가 1m예요.', steps: [`${tot}cm=${mm * 100}cm+${cc}cm`, `${mm * 100}cm=${mm}m`] };
+      }
+      // 길이의 합·차: 1m 20cm+2m 50cm=□m 70cm
+      const add = r() < 0.6; let m1 = ri(r, 1, 5), c1 = 5 * ri(r, 1, 17), m2 = ri(r, 1, 4), c2 = 5 * ri(r, 1, 17);
+      if (add) { while (c1 + c2 >= 100) c2 -= 10; } else { if (m1 <= m2) m1 = m2 + ri(r, 1, 3); if (c1 < c2) [c1, c2] = [c2, c1]; }
+      const cm = add ? c1 + c2 : c1 - c2, mm = add ? m1 + m2 : m1 - m2;
+      return { mode: 11, input: 'pad', q: '빈칸에 알맞은 수를 넣어요.', expr: `${m1}m ${c1}cm${add ? '+' : '−'}${m2}m ${c2}cm=□m ${cm}cm`, answer: mm, unit: 'm', vis: null, type: 'lenAdd',
+        hint1: 'm는 m끼리, cm는 cm끼리 계산해요.', steps: [`cm끼리: ${c1}${add ? '+' : '−'}${c2}=${cm}`, `m끼리: ${m1}${add ? '+' : '−'}${m2}=${mm}`] };
+    },
+    sortCount(r, p = {}) {
+      const ask = p.ask || 'count'; const grp = pick((C.sortSets || []).filter(g => p.chart || !g.chartOnly), r); const kinds = shuffle(grp.items, r).slice(0, p.kinds || 3);
+      let counts; do { counts = kinds.map(() => ri(r, p.chart ? 2 : 1, p.chart ? 7 : 5)); } while (new Set(counts).size < counts.length);
+      const list = shuffle(kinds.flatMap((k, i) => Array(counts[i]).fill(k)), r);
+      const vis = p.chart ? { kind: 'chart', rows: kinds.map((k, i) => [k[0], k[1], counts[i]]), title: grp.chart } : { kind: 'collection', items: list.map(k => k[0]) };
+      const U_ = p.chart ? '명' : grp.unit; const pre = p.chart ? `${grp.chart}. ` : '';
+      if (ask === 'most' || ask === 'least') {
+        const most = ask === 'most'; const v = most ? Math.max(...counts) : Math.min(...counts); const k = kinds[counts.indexOf(v)];
+        return { mode: 12, input: 'choice', q: `${pre}가장 ${most ? '많은' : '적은'} 것은 무엇일까요?`, answer: k[0], sayAns: k[1], choices: kinds.map(x => x[0]), vis, type: p.chart ? 'chartMost' : 'sortMost',
+          hint1: p.chart ? '○가 가장 ' + (most ? '긴' : '짧은') + ' 줄을 찾아봐요.' : '종류별로 나누어 세어 봐요.', steps: kinds.map((x, i) => `${x[1]} ${counts[i]}${U_}`).concat([`가장 ${most ? '많은' : '적은'} 것은 ${k[1]}`]) };
+      }
+      if (ask === 'total') {
+        const tot = counts.reduce((a, b) => a + b, 0);
+        return { mode: 12, input: 'pad', q: `${pre}모두 몇 ${U_}일까요?`, answer: tot, unit: U_, vis, type: 'chartTotal',
+          hint1: '종류별 수를 모두 더해요.', steps: [counts.join('+') + `=${tot}`] };
+      }
+      const i = ri(r, 0, kinds.length - 1); const k = kinds[i];
+      return { mode: 12, input: 'pad', q: `${pre}${k[1]}${josa(k[1], '은', '는')} 몇 ${U_}일까요?`, answer: counts[i], unit: U_, vis, type: p.chart ? 'chartCount' : 'sortCount',
+        hint1: p.chart ? `${k[1]} 줄의 ○를 세어 봐요.` : `${k[1]}만 골라서 하나씩 세어 봐요.`, steps: [`${k[1]}: ${counts[i]}${U_}`] };
+    },
+    mulWord(r, p = {}) {
+      const a = pick(p.dans || [2, 3, 4, 5], r), b = ri(r, 2, p.bmax || 5); const ans = a * b; const style = p.style || pick(['group', 'times'], r); const em = pick(C.things, r);
+      const q = style === 'times' ? `${a}의 ${b}배는 얼마일까요?` : `${em} ${a}개씩 ${b}묶음은 모두 몇 개일까요?`;
+      return { mode: 13, input: 'pad', q, answer: ans, vis: { kind: 'groups', size: a, n: b, emoji: em }, type: style === 'times' ? 'mulTimes' : 'mulGroup', unit: style === 'times' ? '' : '개',
+        hint1: `${a}씩 뛰어 세어 봐요.`, steps: [`${a}씩 ${b}묶음은 ${a}의 ${b}배`, `${Array(b).fill(a).join('+')}=${ans}`, `${a}×${b}=${ans}`] };
     },
   };
   function genProblem(g, p, seed, ctx = {}) {
@@ -627,8 +994,8 @@
       const rung = S.ladder.rung; const lr = C.ladder[rung];
       acts = [0, 1, 2, 3, 4].map(i => ({ type: 'prob', flash: true, prob: genProblem('calc', lr.p, seedOf(s, i, `|r${rung}`), { concrete: rung < 7, eunhoo: false }) }));
     } else {
-      const ex = un.explain[(L.d - 1) % un.explain.length];
-      acts = [{ type: 'explain', ex, asker: L.d % 2 ? 'hyun' : 'chorok' }];
+      const ex = un.explain[(L.d - 1) % un.explain.length]; const asker = L.d % 2 ? 'hyun' : 'chorok';
+      acts = [{ type: 'prob', teach: true, ex, asker, prob: teachProb(ex, asker) }];
     }
     L.cache[s] = acts; return acts;
   }
@@ -653,6 +1020,7 @@
   function nextAct() {
     L.i++;
     if (L.i < L.acts.length) return showAct();
+    if (L.drill) return drillDone();
     L.s++; S.pos.s = L.s; save();
     if (L.s >= STEPS.length) return finishDay();
     const lr = lockReason(); if (lr) return lockedScreen(lr);
@@ -686,12 +1054,23 @@
     }
     if (a.chal) { L.chal.n++; if (ok) L.chal.ok++; }
     if (a.flash) { L.flash.n++; if (ok) L.flash.ok++; }
+    if (a.drill) { L.drillRes.n++; if (ok) L.drillRes.ok++; }
     save();
   }
   function flash(emoji) { const f = document.createElement('div'); f.className = 'feedback'; f.innerHTML = `<span>${emoji}</span>`; document.body.appendChild(f); setTimeout(() => f.remove(), 950); }
 
   function lessonFrame(inner, opts = {}) {
     const total = L.acts.length; const p = Math.round(L.i / total * 100); const un = unitById(L.u);
+    if (L.drill) return `<div class="screen">
+      <div class="topbar">
+        <button class="icon-btn" data-act="quit" aria-label="처음으로">🏠</button>
+        <button class="icon-btn" data-act="prev" aria-label="이전 문제"${L.i === 0 ? ' disabled style="opacity:.35"' : ''}>◀</button>
+        <div class="train"><div class="car now" style="--p:${p}%"><i></i></div></div>
+        <div class="stars">⭐ ${S.stars}</div>
+      </div>
+      <div class="step-name">🧮 연산 연습 · ${esc(L.drill.op.name)} ${esc(L.drill.sz.name)} · ${L.i + 1} / ${total}</div>
+      <div class="stage${opts.split ? ' split' : ''}">${inner}</div>
+    </div>`;
     return `<div class="screen">
       <div class="topbar">
         <button class="icon-btn" data-act="quit" aria-label="처음으로">🏠</button>
@@ -719,7 +1098,7 @@
   }
   function showAct() {
     const a = L.acts[L.i];
-    ({ greet: actGreet, msg: actMsg, concept: actConcept, prob: actProb, explain: actExplain })[a.type](a);
+    ({ greet: actGreet, msg: actMsg, concept: actConcept, prob: actProb })[a.type](a);
   }
   function actMsg(a) {
     render('lesson', lessonFrame(`<div class="prompt"><div class="robot">🤖</div><div class="bubble">${esc(a.text)}</div></div>
@@ -760,6 +1139,15 @@
     if (v.kind === 'base2') return '';
     if (v.kind === 'items') return itemsHtml(v);
     if (v.kind === 'line') return `<div class="nline">${v.nums.map((n, k) => `<span class="${k === v.blank ? 'blank' : ''}">${k === v.blank ? '?' : n}</span>`).join('<i>›</i>')}</div>`;
+    // v0.5.0 그림
+    if (v.kind === 'groups') { const em = v.emoji || '🟢'; const tot = v.size * v.n; return `<div class="groups${tot > 30 ? ' sm' : ''}">${Array.from({ length: v.n }, () => `<span class="grp">${Array.from({ length: v.size }, () => `<i>${em}</i>`).join('')}</span>`).join('')}</div>`; }
+    if (v.kind === 'svg') return `<div class="svgvis">${v.svg}</div>`;
+    if (v.kind === 'shapes') return `<div class="shapes">${v.svgs.join('')}</div>`;
+    if (v.kind === 'seq') return `<div class="seq">${v.items.map(x => `<span>${x}</span>`).join('')}<span class="blank">?</span></div>`;
+    if (v.kind === 'places') return `<div class="places">${v.ds.map((d, i) => `<span class="pgrp">${Array.from({ length: d }, () => `<b class="pv p${v.units[i]}">${v.units[i]}</b>`).join('') || '<em>없음</em>'}</span>`).join('')}</div>`;
+    if (v.kind === 'placeTable') { const ds = String(v.v).split(''); return `<table class="ptable"><tr>${ds.map((_, i) => `<th>${PLACE[v.dg - 1 - i]}의 자리</th>`).join('')}</tr><tr>${ds.map(d => `<td>${d}</td>`).join('')}</tr></table>`; }
+    if (v.kind === 'chart') return `<div class="chart"><div class="muted">${esc(v.title || '')}</div><table>${v.rows.map(([em, nm, n]) => `<tr><th>${em} ${esc(nm)}</th><td>${'<i>○</i>'.repeat(n)}</td></tr>`).join('')}</table></div>`;
+    if (v.kind === 'collection') return `<div class="items coll">${v.items.map(x => `<span>${x}</span>`).join('')}</div>`;
     if (v.kind === 'pairs') { const pr = []; for (let k = 0; k < v.n; k += 2) pr.push(`<span class="pair${k + 1 >= v.n ? ' lone' : ''}">${v.emoji}${k + 1 < v.n ? v.emoji : ''}</span>`); return `<div class="pairs" id="pairs">${pr.join('')}</div>`; }
     return '';
   }
@@ -767,7 +1155,13 @@
     if (!v) return '';
     if (v.tens != null) return `<div class="vis-row">${bundleHtml(v.tens)}${v.plus ? `<b class="opm">+</b>${bundleHtml(v.plus, { cls: 'bb' })}` : ''}</div>`;
     if (v.frame) return framesHtml(v.frame);
-    if (v.line) { const nums = []; for (let n = v.line[0]; n <= v.line[1]; n++) nums.push(n); return `<div class="nline">${nums.map(n => `<span>${n}</span>`).join('<i>›</i>')}</div>`; }
+    const cr = rngFrom('concept|' + JSON.stringify(v));
+    if (v.shapes) return `<div class="shapes">${v.shapes.map(k => shapeSvg(k, cr, 90)).join('')}</div>`;
+    if (v.clock) return `<div class="svgvis">${clockSvg(v.clock[0], v.clock[1], v.clock[1] % 5 !== 0)}</div>`;
+    if (v.groups) return visHtml({ kind: 'groups', size: v.groups[0], n: v.groups[1], emoji: '🍓' });
+    if (v.ruler) return `<div class="svgvis">${rulerSvg(v.ruler[0], v.ruler[1])}</div>`;
+    if (v.places) { const units = [1000, 100, 10, 1].slice(4 - v.places.length); return visHtml({ kind: 'places', ds: v.places, units }); }
+    if (v.line) { const nums = []; for (let n = v.line[0]; n <= v.line[1]; n += (v.line[2] || 1)) nums.push(n); return `<div class="nline">${nums.map(n => `<span>${n}</span>`).join('<i>›</i>')}</div>`; }
     if (v.pairs) return visHtml({ kind: 'pairs', n: v.pairs, emoji: '🦋' });
     return '';
   }
@@ -801,11 +1195,12 @@
   function answerArea(pr) {
     if (pr.input === 'choice') {
       if (pr.vis && pr.vis.kind === 'base2') return `<div class="choices cmp">${pr.choices.map(c => `<button class="choice cmpc" data-act="pick" data-arg="${esc(c)}"><b>${esc(c)}</b>${bundleHtml(c, { cls: 'mini' })}</button>`).join('')}</div>`;
-      return `<div class="choices${pr.two ? ' two' : ''}">${pr.choices.map(c => `<button class="choice num" data-act="pick" data-arg="${esc(c)}">${esc(c)}</button>`).join('')}</div>`;
+      const cls = pr.choices.some(c => /[가-힣]/.test(String(c)) && String(c).length > 2) ? 'text' : 'num';
+      return `<div class="choices${pr.two ? ' two' : ''}">${pr.choices.map(c => `<button class="choice ${cls}" data-act="pick" data-arg="${esc(c)}">${esc(c)}</button>`).join('')}</div>`;
     }
     if (pr.input === 'pad') {
-      const len = String(pr.answer).length; const names = { 1: ['일'], 2: ['십', '일'], 3: ['백', '십', '일'] }[len] || [];
-      return `<div class="padwrap"><div class="ansboxes">${names.map((nm, k) => `<div class="abox" data-k="${k}"><span id="d${k}"></span><small>${nm}의 자리</small></div>`).join('')}</div>
+      const len = String(pr.answer).length; const names = { 1: ['일'], 2: ['십', '일'], 3: ['백', '십', '일'], 4: ['천', '백', '십', '일'] }[len] || [];
+      return `<div class="padwrap"><div class="ansboxes${len > 3 ? ' four' : ''}">${names.map((nm, k) => `<div class="abox" data-k="${k}"><span id="d${k}"></span><small>${nm}의 자리</small></div>`).join('')}</div>
         <div class="pad">${[1, 2, 3, 4, 5, 6, 7, 8, 9].map(k => `<button class="key" data-act="key" data-arg="${k}">${k}</button>`).join('')}
         <button class="key del" data-act="del" aria-label="지우기">⌫</button><button class="key" data-act="key" data-arg="0">0</button><button class="key ok" data-act="ok" aria-label="확인">✔</button></div></div>`;
     }
@@ -817,16 +1212,18 @@
   const sayGuess = pr => { const w = `${pr.eunhoo}${pr.unit || ''}`; return w + josa(w, '이라고', '라고'); };
   function actProb(a) {
     const pr = a.prob; const att = { n: 0, done: false }; let typed = '';
-    const tag = a.greet ? '오늘의 수' : a.flash ? `사다리 ${S.ladder.rung + 1}칸` : a.chal ? '마무리 도전' : a.review ? '복습' : MODES[pr.mode];
+    const tag = a.greet ? '오늘의 수' : a.teach ? '가르쳐주기' : a.drill ? '연산 연습' : a.flash ? `사다리 ${S.ladder.rung + 1}칸` : a.chal ? '마무리 도전' : a.review ? '복습' : MODES[pr.mode];
+    const ansWord = () => `${pr.sayAns || pr.answer}${pr.unit ? pr.unit : ''}`;
     const f = pr.friend && C.friends[pr.friend];
     const showVis = pr.vis && (pr.mode !== 5 || pr.showVis);
     const left = `<div class="prompt">
         ${a.review ? '<div class="muted" style="font-weight:800">🔁 지난번에 어려웠던 문제예요</div>' : ''}
-        ${pr.mode === 6 ? `<div class="say">${f ? friendHtml(pr.friend, true) : ''}<span class="text story">${esc(pr.q)}</span></div>` : `<div class="bubble">${esc(pr.q)}</div>`}
+        ${pr.mode === 6 || pr.mode === 14 ? `<div class="say">${f ? friendHtml(pr.friend, true) : ''}<span class="text story">${esc(pr.q)}</span></div>` : `<div class="bubble">${esc(pr.q)}</div>`}
+        ${a.teach ? `<div class="muted" style="font-weight:700">${esc(f.call || f.name)}에게 정답을 넣어서 알려 줘요!</div>` : ''}
         ${pr.sub ? `<div class="muted" style="font-weight:700">${esc(pr.sub)}</div>` : ''}
-        ${pr.expr ? `<div class="expr" id="expr">${esc(pr.expr).replace('□', '<span class="qbox">□</span>')}</div>` : ''}
+        ${pr.expr ? `<div class="expr${pr.expr.length > 11 ? ' long' : ''}" id="expr">${esc(pr.expr).replace('□', '<span class="qbox">□</span>')}</div>` : ''}
         <div id="visbox"${showVis ? '' : ' hidden'}>${pr.input === 'frame' ? '' : visHtml(pr.vis)}</div>
-        ${pr.mode === 5 && !pr.showVis && pr.vis ? '<button class="btn small" data-act="helper">🧮 10칸 상자 도우미</button>' : ''}
+        ${pr.mode === 5 && !pr.showVis && pr.vis ? `<button class="btn small" data-act="helper">🧮 ${pr.vis.kind === 'frames' ? '10칸 상자 도우미' : '그림으로 보기'}</button>` : ''}
         ${pr.eunhoo != null ? `<div class="say">${friendHtml('eunhoo')}<span class="text">나는 ${esc(sayGuess(pr))} 생각해. 너는?</span></div>` : ''}
         <div class="hintbox" id="hint" hidden></div>
         <div class="listen-row"><button class="listen" data-act="play" aria-label="다시 듣기">🔊</button></div>
@@ -837,19 +1234,26 @@
     const right_ = async () => {
       att.done = true; const my = actToken; ding();
       const n = award(true); flash(n ? '⭐' : '👍');
-      if (!a.greet) record(a, att.n === 0);
+      if (!a.greet && !a.teach) record(a, att.n === 0);
       const hint = document.getElementById('hint'); if (hint) { hint.hidden = true; }
+      if (a.teach) { // 가르쳐주기: 정답을 넣으면 설명을 보여주고 기록해요 (v0.5.0, 말하기 대신 숫자 입력)
+        teachLog(a, String(pr.answer), att.n === 0);
+        if (hint) { hint.hidden = false; hint.innerHTML = `💬 이렇게 설명할 수 있어요<br><b>${esc(pr.model)}</b>`; }
+        const fr = C.friends[a.asker]; const thanks = `${fr.call || fr.name}${josa(fr.call || fr.name, '이', '가')}`;
+        hush(); await ko(`${praise()} 우와! ${thanks} 이제 알겠대. 고마워!`); if (my !== actToken) return; await ko(pr.model); await sleep(900); if (my === actToken) nextAct();
+        return;
+      }
       const nr = document.getElementById('nextRow'); if (nr) nr.hidden = true;
       document.querySelectorAll('.qbox').forEach(q => { q.textContent = pr.answer; q.classList.add('ok'); });
       let msg = praise();
       if (pr.eunhoo != null) msg += pr.eunhoo === pr.answer ? ' 은후도 맞았네!' : ` 은후는 ${sayGuess(pr)} 했지만, ${S.settings.childName}${josa(S.settings.childName, '이', '가')} 맞았어!`;
-      const ansSay = pr.expr ? pr.expr.replace('□', pr.answer) : pr.storyExpr ? pr.storyExpr.replace('□', pr.answer) : `${pr.answer}${pr.unit || ''}`;
+      const ansSay = pr.expr ? pr.expr.replace('□', pr.answer) : pr.storyExpr ? pr.storyExpr.replace('□', pr.answer) : ansWord();
       hush(); await ko(`${msg} ${ansSay}`); await sleep(350); if (my === actToken) nextAct();
     };
     // 틀렸을 때: 힌트 1 → 풀이 과정 → 정답·풀이 보여주기 ("땡"·빨간 X 없음)
     // 공통 64번: 정답을 보여줘도 빈칸·보기·구슬·패드는 채우지 않아요. 윤이가 직접 넣으면 별 1개, "다음 ▶"으로 넘어가면 0개
     const wrong_ = async () => {
-      const my = actToken; if (!a.greet && att.n === 0) record(a, false);
+      const my = actToken; if (!a.greet && !a.teach && att.n === 0) record(a, false);
       att.n++; hush();
       const hint = document.getElementById('hint'); hint.hidden = false;
       if (att.n === 1) {
@@ -867,11 +1271,11 @@
         if (pr.input === 'frame') fillTo(0);
         if (pr.input === 'pad') { typed = ''; showTyped(); }
         document.getElementById('nextRow').hidden = false;
-        await ko(`${LINES.showAnswer || '괜찮아!'} 정답은 ${pr.answer}${pr.unit ? pr.unit : ''}. 정답을 넣으면 별을 받아요!`);
+        await ko(`${LINES.showAnswer || '괜찮아!'} 정답은 ${ansWord()}. 정답을 넣으면 별을 받아요!`);
       } else {
         // 정답을 보여준 뒤에 또 틀려도 괜찮아요 (벌점 없음)
         if (pr.input === 'frame') fillTo(0);
-        await ko(`괜찮아, 천천히 해 보자. 정답은 ${pr.answer}${pr.unit ? pr.unit : ''}.`);
+        await ko(`괜찮아, 천천히 해 보자. 정답은 ${ansWord()}.`);
       }
       if (my !== actToken) return;
     };
@@ -884,7 +1288,7 @@
     const handlers = {
       ...baseHandlers(),
       play: () => { hush(); sayQ(); },
-      next: () => { if (!att.done) { att.done = true; award(false); } nextAct(); },
+      next: () => { if (!att.done) { att.done = true; award(false); if (a.teach) teachLog(a, '(넘어감)', false); } nextAct(); },
       helper: (x, btn) => { const vb = document.getElementById('visbox'); vb.hidden = false; btn.remove(); },
       pick: (arg, btn) => { if (att.done || btn.classList.contains('wrong')) return; if (String(arg) === String(pr.answer)) { btn.classList.add('right'); check(arg); } else { btn.classList.add('wrong'); check(arg); } },
       key: k => { if (att.done) return; const len = String(pr.answer).length; if (typed.length >= len) return; typed += k; showTyped(); },
@@ -916,7 +1320,8 @@
     }
     const my = actToken;
     (async () => {
-      if (!a.greet && !L.heard[pr.mode + (a.flash ? 'f' : '')] && !a.chal) { L.heard[pr.mode + (a.flash ? 'f' : '')] = 1; if (a.flash) await ko('반짝 연산! 천천히 해도 돼요.'); }
+      if (!a.greet && !L.heard[pr.mode + (a.flash ? 'f' : '')] && !a.chal) { L.heard[pr.mode + (a.flash ? 'f' : '')] = 1; if (a.flash) await ko('반짝 연산! 천천히 해도 돼요.'); if (a.drill && L.i === 0) await ko('연산 연습! 천천히 해도 돼요.'); }
+      if (a.teach && my === actToken) { const fr = C.friends[a.asker]; await ko(`${fr.name}${josa(fr.name, '이', '가')} 물어봐요.`); }
       if (my !== actToken) return; await sayQ();
       if (my === actToken && pr.eunhoo != null) await ko(`은후는 ${sayGuess(pr)} 생각한대. ${S.settings.childName}${josa(S.settings.childName, '은', '는')}?`);
     })();
@@ -943,50 +1348,17 @@
     marble.addEventListener('click', e => { if (marble.dataset.moved) { e.stopPropagation(); marble.dataset.moved = ''; } }, true);
   }
 
-  /* ---------- 설명하기 (현이·초록이에게 가르쳐주기) ---------- */
-  function actExplain(a) {
-    const ex = a.ex; const f = C.friends[a.asker]; const q = `${callName()}, ${ex.q}`; let closed = false;
-    const finish = async (said, self) => {
-      if (closed) return; closed = true; const my = actToken;
-      const ok = said.length ? koMatch(said, ex.keywords) : !!self;
-      const n = award(true); flash(n ? '⭐' : '👍'); ding();
-      if (S.settings.explainSave !== false && S.settings.explainSave !== 'false') { S.explains.unshift({ date: today(), who: f.name, q: ex.q, said: said[0] || (self ? '(말했어요 버튼)' : ''), ok }); S.explains = S.explains.slice(0, 14); save(); }
-      document.getElementById('model').hidden = false;
-      document.getElementById('nextRow').hidden = false;
-      const thanks = `${f.call || f.name}${josa(f.call || f.name, '이', '가')}`;
-      await ko(ok ? `우와! ${thanks} 이제 알겠대. 고마워!` : `고마워! 이렇게도 말할 수 있어. ${ex.model}`);
-      if (my === actToken) { await sleep(400); }
-    };
-    render('lesson', lessonFrame(`<div class="prompt">
-        <div class="say">${friendHtml(a.asker, true)}<span class="text">${esc(q)}</span></div>
-        <div class="muted" style="font-weight:700">${esc(f.call || f.name)}에게 가르쳐 줘요. 맞고 틀리고는 없어요!</div>
-        <div class="hintbox" id="model" hidden>💬 이렇게 말할 수도 있어요<br><b>${esc(ex.model)}</b></div>
-        <div class="listen-row"><button class="listen" data-act="play">🔊</button></div>
-      </div><div class="prompt">
-        ${canListen() ? `<div class="mic-area"><button class="mic" data-mic="1" aria-label="누르고 말하기">🎤</button><div class="heard" id="heard">버튼을 누르고 말해요</div></div>` : ''}
-        <button class="btn good" data-act="selfok">🗣️ 말했어요!</button>
-        <div class="next-row" id="nextRow" hidden><button class="btn primary" data-act="next">다음 ▶</button></div>
-      </div>`, { split: true, tag: '가르쳐주기' }), {
-      ...baseHandlers(), play: () => { hush(); ko(q); }, next: nextAct,
-      selfok: () => finish([], true),
-    });
-    const b = document.querySelector('[data-mic]');
-    if (b) {
-      let busy = false;
-      b.addEventListener('pointerdown', async e => {
-        e.preventDefault(); if (busy || closed) return; busy = true; hush(); b.classList.add('on');
-        const h = document.getElementById('heard'); if (h) h.textContent = '듣고 있어요…';
-        const my = actToken; const alts = await recognize(); busy = false; b.classList.remove('on');
-        if (my !== actToken) return;
-        if (micDenied) { toast('마이크 권한이 없어요. "말했어요" 버튼을 눌러요'); b.parentElement.remove(); return; }
-        if (!alts.length) { if (h) h.textContent = '잘 안 들렸어요. 한 번 더!'; return; }
-        if (h) h.textContent = `들린 말: “${alts[0]}”`;
-        finish(alts, false);
-      });
-      const up = () => setTimeout(stopRec, 250);
-      b.addEventListener('pointerup', up); b.addEventListener('pointercancel', up);
-    }
-    ko(`${f.name}${josa(f.name, '이', '가')} 물어봐요. ${q}`);
+  /* ---------- 설명하기 (현이·초록이에게 가르쳐주기) ----------
+     v0.5.0: 말하기(음성인식) 대신 숫자 패드·보기로 정답을 넣어요. 맞히면 "이렇게 설명할 수 있어요"를 보여주고 읽어줘요.
+     content.js explain: { q, ans, choices?, unit?, hint?, model } */
+  function teachProb(ex, asker) {
+    return { g: 'teach', type: 'teach', label: '가르쳐주기', mode: 14, input: ex.choices ? 'choice' : 'pad', two: !!(ex.choices && ex.choices.length === 2),
+      q: `${callName()}, ${ex.q}`, answer: ex.ans, choices: ex.choices, friend: asker, unit: ex.unit || '', model: ex.model,
+      hint1: ex.hint || '천천히 생각해 봐요. 그림을 떠올려 봐요.', steps: [ex.model] };
+  }
+  function teachLog(a, said, ok) {
+    if (S.settings.explainSave === false || S.settings.explainSave === 'false') return;
+    const fr = C.friends[a.asker]; S.explains.unshift({ date: today(), who: fr.name, q: a.ex.q, said, ok }); S.explains = S.explains.slice(0, 14); save();
   }
 
   /* ================= 하루 끝 ================= */
@@ -998,7 +1370,11 @@
       document.body.appendChild(c); setTimeout(() => c.remove(), 4200);
     }
   }
-  function nextReady(u) { const i = READY.findIndex(x => x.id === u); return READY[(i + 1) % READY.length].id; }
+  // 다음 단원: 아직 하루도 안 한 단원 중 교과서 순서로 가장 앞 단원 (v0.5.0 — 새로 열린 1학년 모양·시계 단원을 건너뛰지 않게). 모두 했으면 바로 다음 단원
+  function nextReady(u) {
+    const fresh = READY.find(x => x.id !== u && doneCount(x.id) === 0); if (fresh) return fresh.id;
+    const i = READY.findIndex(x => x.id === u); return READY[(i + 1) % READY.length].id;
+  }
   // 연산 사다리: 하루 한 번, 반짝 연산 5문제의 첫 답 정답률이 기준 이상인 날이 연속으로 모이면 다음 칸
   function ladderCheck() {
     const LD = S.ladder; if (L.flash.n < 5 || LD.lastDate === today()) return null;
@@ -1240,9 +1616,9 @@
       <div class="card"><h3>전체</h3><div class="kv">
         <div>누적 학습일<b>${S.days.length}일</b></div><div>별<b>${S.stars}개</b></div><div>스티커<b>${Object.keys(S.stickers).length} / ${U.length}</b></div><div>연산 사다리<b>${LD.rung + 1}칸</b></div>
       </div></div>
-      <div class="card"><h3>🗣️ 설명하기 기록 (최근 14개)</h3>
-        ${S.explains.length ? `<ol class="list">${S.explains.map(x => `<li>${esc(x.date)} ${esc(x.who)}: “${esc(x.q)}” → <b>${esc(x.said || '(들리지 않음)')}</b>${x.ok ? ' 👍' : ''}</li>`).join('')}</ol>` : '<p class="muted">아직 없어요. 설명하기 단계에서 윤이가 말한 내용이 글자로 남아요.</p>'}
-        <p class="muted">글자 기록은 이 태블릿 안에만 저장돼요. 목소리 녹음 저장은 v0.4에서 추가해요.</p>
+      <div class="card"><h3>🗣️ 설명하기(가르쳐주기) 기록 (최근 14개)</h3>
+        ${S.explains.length ? `<ol class="list">${S.explains.map(x => `<li>${esc(x.date)} ${esc(x.who)}: “${esc(x.q)}” → <b>${esc(x.said || '-')}</b>${x.ok ? ' 👍 한 번에' : ''}</li>`).join('')}</ol>` : '<p class="muted">아직 없어요. 설명하기 단계에서 윤이가 넣은 답이 남아요.</p>'}
+        <p class="muted">v0.5.0부터 설명하기는 말하기 대신 숫자 패드·보기로 정답을 넣어요. 기록은 이 태블릿 안에만 저장돼요.</p>
       </div>
       `)}
       ${ptabPanel('stats', `
@@ -1263,12 +1639,12 @@
       <div class="card"><h3>🏫 지금 학교 단원</h3>
         <div class="form"><label>학교에서 배우는 단원<select id="school">${READY.map(x => `<option value="${x.id}"${S.pos.u === x.id ? ' selected' : ''}>${esc(unitLabel(x))}</option>`).join('')}</select></label></div>
         <div class="row" style="margin-top:10px"><button class="btn small primary" data-act="school">이 단원 1일차부터 시작</button></div>
-        <p class="muted">“오늘 수학”이 이 단원 1일차부터 시작해요. 완료 기록·별·스티커는 그대로예요. (나머지 단원은 v0.2·v0.3에서 열려요)</p></div>
+        <p class="muted">“오늘 수학”이 이 단원 1일차부터 시작해요. 완료 기록·별·스티커는 그대로예요. 1학년 2학기 6개 단원과 2학년 1·2학기 12개 단원을 할 수 있어요 (1학년 1학기는 준비 중). 단원을 다 끝내면 아직 시작하지 않은 앞 단원부터 차례로 이어져요.</p></div>
       <div class="card"><h3>진도 조정</h3>
         <p>지금 진도: <b>${esc(un.title)} ${S.pos.d}일차 · ${STEPS[S.pos.s].name}</b> <span class="muted">(코드 ${code})</span></p>
         <div class="form">
           <label>단원<select id="adjU">${READY.map(x => `<option value="${x.id}"${S.pos.u === x.id ? ' selected' : ''}>${unitNo(x)}. ${esc(unitLabel(x))} (${doneCount(x.id)}/${x.days.length}일)</option>`).join('')}</select></label>
-          <label>일차<select id="adjD">${Array.from({ length: 8 }, (_, i) => `<option value="${i + 1}"${S.pos.d === i + 1 ? ' selected' : ''}>${i + 1}일차</option>`).join('')}</select></label>
+          <label>일차<select id="adjD">${Array.from({ length: Math.max(...READY.map(x => x.days.length)) }, (_, i) => `<option value="${i + 1}"${S.pos.d === i + 1 ? ' selected' : ''}>${i + 1}일차</option>`).join('')}</select></label>
           <label>단계<select id="adjS">${STEPS.map((x, i) => `<option value="${i}"${S.pos.s === i ? ' selected' : ''}>${i + 1}. ${x.name}</option>`).join('')}</select></label>
           <label style="grid-template-columns:auto 1fr"><input type="checkbox" id="adjMark" style="width:24px;min-height:24px">이 단원의 앞 일차는 완료, 뒤 일차는 미완료로 맞추기</label>
         </div>
@@ -1329,7 +1705,7 @@
         <li>단원·문제 구성·이야기 문제 문장은 <b>content.js</b> 파일에서 고쳐요. 고친 뒤 <b>sw.js</b>의 VERSION과 <b>app.js</b>의 APP_VERSION을 올리면 설치된 앱에 반영돼요.</li>
         <li>한국어가 잘 안 들리면: 태블릿 <b>설정 → 일반 → 글자 읽어주기(TTS) → 기본 엔진</b>을 <b>Google 음성 인식 및 합성</b>으로 바꾸고, 엔진 설정에서 <b>한국어 음성 데이터(고품질)</b>를 설치한 뒤 앱을 다시 켜세요.</li>
         <li>윤이 영어 앱과 진도·별·보상·시간 제한이 모두 따로예요 (저장 키 yuni-math-v1).</li>
-        <li>음성인식(설명하기): ${SR ? (micDenied ? '마이크 권한이 꺼져 있어요 (크롬 설정 → 사이트 설정 → 마이크)' : '사용 가능') : '이 브라우저는 지원하지 않아요 → 크롬에서 열어주세요'}</li>
+        <li>정답은 모두 화면의 숫자 패드·보기로 넣어요. 태블릿에 키보드를 연결하면 숫자 키·Enter·Backspace로도 넣을 수 있어요 (설명하기도 숫자 입력, v0.5.0).</li>
       </ul></div>
       `)}
     </div></div>`, {
@@ -1393,7 +1769,7 @@
     window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
   }
   try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {}); } catch (e) { /* */ }
-  document.addEventListener('visibilitychange', () => { if (document.hidden) { hush(); stopRec(); } });
+  document.addEventListener('visibilitychange', () => { if (document.hidden) hush(); });
   window.YUNI = { get state() { return S; }, get act() { return L && L.acts[L.i]; }, get lesson() { return L; }, get screen() { return screen; }, spoken, speakify, koSentences, sino, native, josa, parseCode, genProblem, makeCalc, rngFrom, KEY, APP_VERSION }; // 테스트용
   fixPos(); save();
   homeScreen();
