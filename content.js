@@ -16,6 +16,7 @@
  *    pattern(규칙 p.kind shape/num/mul) bigNum(세·네 자리 수 p.digits, ask hund/make/place/skip/cmp/read)
  *    length(길이 ask ruler/mcm/add) sortCount(분류·표·그래프 ask count/most/least/total, chart) mulWord(묶어 세기·몇의 몇 배)
  *    calc/story kind 추가: carry2·borrow2(받아올림·받아내림 두 자리) threeBig(두 자리 세 수) blank(□ 구하기) mul(곱셈구구 dans) mulBlank div(나눗셈) mul2 div2 d1 big2 big3 mix4
+ *  - v0.6.0: clock ask 추가 set(시계 바늘을 직접 놓기, step 60·30) story(시간 이야기 문제, clockStories 틀) · flash(반짝 연산 레벨, 한 화면에 여러 문제)
  *  - explain(설명하기): { q, ans, choices?(보기), unit?, hint?, model } — 윤이가 숫자 패드·보기로 정답을 넣으면 model 설명을 보여줘요 (v0.5.0, 말하기 대신)
  *  - 글 속 숫자는 앱이 읽기 쉬운 말로 바꿔 읽어요 (8+5 → 팔 더하기 오, 7마리 → 일곱 마리)
  *  - 고친 뒤 sw.js 의 VERSION 과 app.js 의 APP_VERSION 을 올려야 설치된 앱에 반영돼요.
@@ -154,32 +155,37 @@ window.CONTENT = {
     {
       id: '2-5', sem: '1-2', title: '시계 보기와 규칙 찾기', icon: '⏰', sticker: '⏰', ready: true,
       mission: '오늘 아침 일어난 시각, 밥 먹은 시각을 시계로 보고 아빠한테 말해 봐요. 그리고 블록으로 규칙이 있는 무늬를 만들어요!',
+      // v0.6.0: 시계는 정각·30분만. 읽기(read)보다 바늘 놓기(set)·시간 이야기(story)를 더 많이, 규칙 문제도 더 어렵게 (아빠 요청 2026-10-19)
       days: [
         { title: '몇 시',
           concept: [{ pic: '⏰', title: '긴바늘이 12를 가리키면', text: '짧은바늘이 3, 긴바늘이 12를 가리키면 3시예요. 긴바늘이 12에 있으면 정각이에요.', vis: { clock: [3, 0] } }],
-          items: [{ g: 'clock', n: 6, p: { step: 60 } }] },
+          items: [{ g: 'clock', n: 3, p: { step: 60 } }, { g: 'clock', n: 4, p: { ask: 'set', step: 60 } }] },
         { title: '몇 시 30분',
           concept: [{ pic: '🕧', title: '긴바늘이 6을 가리키면', text: '긴바늘이 6을 가리키면 30분이에요. 짧은바늘은 두 숫자 사이에 있어요. 4와 5 사이면 4시 30분!', vis: { clock: [4, 30] } }],
-          items: [{ g: 'clock', n: 6, p: { step: 30 } }] },
-        { title: '시계 보기 연습',
-          concept: [{ pic: '🚆', title: '하루 시간표', text: '8시에 학교 가고, 12시 30분에 점심을 먹어요. 시계를 보면 할 일을 알 수 있어요.', vis: { clock: [12, 30] } }],
-          items: [{ g: 'clock', n: 3, p: { step: 60 } }, { g: 'clock', n: 3, p: { step: 30 } }] },
+          items: [{ g: 'clock', n: 3, p: { step: 30 } }, { g: 'clock', n: 4, p: { ask: 'set', step: 30 } }] },
+        { title: '시계 바늘 놓기',
+          concept: [{ pic: '🕰️', title: '바늘을 직접 놓아요', text: '긴바늘을 먼저 12나 6에 놓고, 짧은바늘을 놓아요. 4시 30분이면 짧은바늘은 4와 5 사이예요.', vis: { clock: [4, 30] } }],
+          items: [{ g: 'clock', n: 5, p: { ask: 'set', step: 30 } }, { g: 'clock', n: 2, p: { ask: 'story', step: 30 } }] },
+        { title: '시간이 지나면',
+          concept: [{ pic: '🚆', title: '몇 시간 뒤', text: '1시 30분에 놀기 시작해서 2시간 동안 놀면 3시 30분이에요. 짧은바늘이 숫자 한 칸 가면 1시간이에요.', vis: { clock: [3, 30] } }],
+          items: [{ g: 'clock', n: 5, p: { ask: 'story', step: 30 } }, { g: 'clock', n: 2, p: { ask: 'set', step: 30 } }] },
         { title: '무늬 규칙',
           concept: [{ pic: '🐞', title: '되풀이되는 규칙', text: '무당벌레, 나비, 무당벌레, 나비… 되풀이되는 부분을 찾으면 다음에 올 것을 알 수 있어요.' }],
-          items: [{ g: 'pattern', n: 6, p: { kind: 'shape' } }] },
+          items: [{ g: 'pattern', n: 5, p: { kind: 'shape', abc: true } }, { g: 'pattern', n: 2, p: { kind: 'num', steps: [2, 5], max: 50 } }] },
         { title: '수의 규칙',
           concept: [{ pic: '🔢', title: '몇씩 커질까?', text: '2, 4, 6, 8은 2씩 커져요. 그래서 다음 수는 10이에요.', vis: { line: [2, 10, 2] } }],
-          items: [{ g: 'pattern', n: 5, p: { kind: 'num', steps: [1, 2, 5, 10], max: 60 } }, { g: 'pattern', n: 1, p: { kind: 'shape' } }] },
+          items: [{ g: 'pattern', n: 5, p: { kind: 'num', steps: [2, 3, 5, 10], max: 100 } }, { g: 'pattern', n: 2, p: { kind: 'num', steps: [2, 5, 10], max: 100, down: true } }] },
         { title: '수 배열표 규칙',
           concept: [{ pic: '🗓️', title: '수 배열표', text: '수 배열표에서 오른쪽으로 가면 1씩, 아래로 가면 10씩 커져요.' }],
-          items: [{ g: 'pattern', n: 3, p: { kind: 'num', steps: [10], max: 100 } }, { g: 'pattern', n: 3, p: { kind: 'num', steps: [1, 2, 5], max: 100 } }] },
+          items: [{ g: 'pattern', n: 3, p: { kind: 'num', steps: [10], max: 100 } }, { g: 'pattern', n: 2, p: { kind: 'num', steps: [1, 2, 5], max: 100 } }, { g: 'clock', n: 2, p: { ask: 'story', step: 30 } }] },
         { title: '단원 마무리 도전', challenge: true,
-          items: [{ g: 'clock', n: 3, p: { step: 60 } }, { g: 'clock', n: 3, p: { step: 30 } }, { g: 'pattern', n: 2, p: { kind: 'shape' } }, { g: 'pattern', n: 2, p: { kind: 'num', steps: [2, 5, 10], max: 60 } }] },
+          items: [{ g: 'clock', n: 2, p: { step: 30 } }, { g: 'clock', n: 3, p: { ask: 'set', step: 30 } }, { g: 'clock', n: 2, p: { ask: 'story', step: 30 } }, { g: 'pattern', n: 1, p: { kind: 'shape', abc: true } }, { g: 'pattern', n: 2, p: { kind: 'num', steps: [2, 5, 10], max: 100 } }] },
       ],
       explain: [
         { q: '짧은바늘이 3, 긴바늘이 12를 가리키면 몇 시야?', ans: 3, unit: '시', model: '긴바늘이 12에 있으니까 정각! 짧은바늘이 3이니까 3시예요!' },
         { q: '2, 4, 6, 8 다음은 뭐야?', ans: 10, hint: '몇씩 커지는지 봐.', model: '2씩 커지는 규칙이에요. 8+2=10이에요!' },
         { q: '긴바늘이 6을 가리키면 몇 분이야?', ans: 30, unit: '분', model: '긴바늘이 6을 가리키면 30분이에요!' },
+        { q: '1시에 놀기 시작해서 2시간 놀았어. 몇 시가 됐을까?', ans: 3, unit: '시', hint: '짧은바늘이 숫자 두 칸 가요.', model: '1시에서 2시간 지나면 3시예요. 짧은바늘이 1에서 3으로 가요!' },
       ],
     },
     {
@@ -538,7 +544,24 @@ window.CONTENT = {
     },
   ],
 
-  // 연산 사다리 12칸 (단원과 따로 올라가요). 1~7칸은 10칸 상자 그림을 함께, 8칸부터는 식 위주
+  // ⚡ 반짝 연산 레벨 (v0.6.0, MREQ-41). 하루 공부 4단계 "반짝 연산"은 한 화면에 per문제씩 sets화면이 나와요.
+  // 레벨 1이 기본 난이도(두 자리+한 자리, 받아올림, 받아내림). 한 화면은 pool에서 골고루 섞어 내고, 두 번째 화면은 한 레벨 위 문제예요.
+  // 하루 반짝 연산의 첫 시도 정답률이 upPct 이상이면 다음 날부터 레벨이 하나 올라가요. 레벨은 내려가지 않아요 (아빠 화면에서만 바꿔요).
+  flash: {
+    per: 5, sets: 2, upPct: 80,
+    levels: [
+      { name: '두 자리와 한 자리', ex: '34+5, 27+5, 43−8', pool: [{ kind: 'twoOne', op: '+' }, { kind: 'twoOne', op: '-' }, { kind: 'carry' }, { kind: 'borrow' }, { kind: 'carry2', one: true }, { kind: 'borrow2', one: true }] },
+      { name: '받아올림·받아내림', ex: '38+7, 52−6, 27+15', pool: [{ kind: 'carry2', one: true }, { kind: 'borrow2', one: true }, { kind: 'carry2', one: false }, { kind: 'borrow2', one: false }, { kind: 'tens', op: 'mix' }] },
+      { name: '두 자리끼리', ex: '27+15, 52−27, 12+25+8', pool: [{ kind: 'carry2', one: false }, { kind: 'borrow2', one: false }, { kind: 'two', op: 'mix' }, { kind: 'threeBig', op: 'mix' }] },
+      { name: '두 자리 섞기', ex: '46+38, 84−36, 25+□=41', pool: [{ kind: 'big2', op: '+' }, { kind: 'big2', op: '-' }, { kind: 'blank', op: 'mix' }, { kind: 'threeBig', op: 'mix' }] },
+      { name: '곱셈구구 시작', ex: '75+59, 3×7, 5×□=35', pool: [{ kind: 'big2', op: '+' }, { kind: 'big2', op: '-' }, { kind: 'mul', dans: [2, 3, 4, 5] }, { kind: 'mulBlank', dans: [2, 3, 4, 5] }] },
+      { name: '곱셈구구 전체', ex: '7×8, 24÷4, 6×□=48', pool: [{ kind: 'mul', swap: true }, { kind: 'mulBlank' }, { kind: 'div', dans: [2, 3, 4, 5] }, { kind: 'big2', op: '-' }] },
+      { name: '나눗셈까지', ex: '56÷8, 235+418', pool: [{ kind: 'mul', swap: true }, { kind: 'div' }, { kind: 'big3', op: '+' }, { kind: 'big3', op: '-' }] },
+      { name: '큰 수 도전', ex: '23×4, 84÷4, 642−275', pool: [{ kind: 'mul2' }, { kind: 'div2' }, { kind: 'big3', op: '+' }, { kind: 'big3', op: '-' }] },
+    ],
+  },
+
+  // 연산 사다리 20칸 (단원과 따로 올라가요). v0.6.0부터 반짝 연산 문제는 위 flash 레벨에서 나오고, 사다리는 배지(🏅) 기록으로 그대로 올라가요
   ladder: [
     { name: '5까지 모으기·가르기', ex: '2+3, 5−1', p: { kind: 'small', max: 5, op: 'mix' } },
     { name: '10까지 덧셈', ex: '4+5', p: { kind: 'small', max: 10, op: '+' } },
@@ -635,6 +658,35 @@ window.CONTENT = {
       { pic: '🍪', text: '쿠키 {a}개를 {b}명이 똑같이 나누어 먹어요. 한 명이 몇 개씩 먹을까요?', unit: '개' },
       { pic: '🐟', text: '물고기 {a}마리를 어항 {b}개에 똑같이 나누어 넣어요. 어항 하나에 몇 마리씩일까요?', unit: '마리' },
       { pic: '⚙️', text: '{F} 부품 {a}개를 로봇 {b}대에 똑같이 나누어 달아요. 한 대에 몇 개씩일까요?', unit: '개' },
+    ],
+  },
+
+  // 시간 이야기 문제 틀 (v0.6.0, 모드 8 clock ask:'story'). {F} = 친구 이름(현이가…), {T} = 시작 시각(1시 30분), {T이에요} = 시각+이에요/예요,
+  // {K} = 몇 시간, {E} = 끝난 시각. after = {K}시간 뒤 시각 묻기, half = 30분 뒤, before = {K}시간 전 시각, dur = 걸린 시간(몇 시간)
+  clockStories: {
+    after: [
+      { pic: '🐞', text: '지금 {T이에요}. {F} {K}시간 동안 곤충을 관찰했어요. {몇시가} 됐을까요?' },
+      { pic: '🏖️', text: '{T}에 바닷가에 도착했어요. {K}시간 동안 물고기를 봤어요. {몇시가} 됐을까요?' },
+      { pic: '🤖', text: '{F} {T}부터 로봇을 조립했어요. {K}시간 걸렸어요. 다 만들었을 때 {몇시일까요}?' },
+      { pic: '🧪', text: '{T}에 과학 실험을 시작했어요. {K}시간 뒤에 끝나요. {몇시에} 끝날까요?' },
+      { pic: '🚆', text: '기차가 {T}에 출발했어요. {K}시간 동안 달려요. {몇시에} 도착할까요?' },
+      { pic: '🎡', text: '지금 {T이에요}. 윤이와 {F} {K}시간 동안 놀았어요. {몇시가} 됐을까요?' },
+    ],
+    half: [
+      { pic: '🍪', text: '지금 {T이에요}. 30분 뒤에 간식을 먹어요. {몇시에} 먹을까요?' },
+      { pic: '🐌', text: '{T}에 달팽이 관찰을 시작했어요. 30분 동안 봤어요. {몇시가} 됐을까요?' },
+      { pic: '🚌', text: '여행 버스가 {T}에 출발해서 30분 뒤에 도착해요. {몇시에} 도착할까요?' },
+    ],
+    before: [
+      { pic: '🐟', text: '지금 {T이에요}. {F} {K}시간 전에 낚시를 시작했어요. {몇시에} 시작했을까요?' },
+      { pic: '🤖', text: '{T}에 로봇이 다 만들어졌어요. 만드는 데 {K}시간 걸렸어요. {몇시에} 시작했을까요?' },
+      { pic: '✈️', text: '비행기가 {T}에 도착했어요. {K}시간 동안 날았어요. {몇시에} 출발했을까요?' },
+    ],
+    dur: [
+      { pic: '🦋', text: '{F} {T}부터 {E}까지 나비를 쫓아다녔어요. 몇 시간 동안 쫓아다녔을까요?' },
+      { pic: '🧪', text: '{T}에 실험을 시작해서 {E}에 끝났어요. 몇 시간 걸렸을까요?' },
+      { pic: '🚗', text: '{T}에 출발해서 {E}에 바다에 도착했어요. 몇 시간 걸렸을까요?' },
+      { pic: '🤖', text: '{F} {T}부터 {E}까지 로봇 놀이를 했어요. 몇 시간 동안 놀았을까요?' },
     ],
   },
 

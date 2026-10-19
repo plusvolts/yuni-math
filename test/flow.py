@@ -38,11 +38,13 @@ MOCK = """
 
 RESULTS = {}   # id -> [ok(bool), note]
 def check(rid, ok, note=''):
+    if not ok: print(f'  ✗ {rid}: {note}')
     prev = RESULTS.get(rid)
     if prev is None: RESULTS[rid] = [bool(ok), note]
     else: RESULTS[rid] = [prev[0] and bool(ok), (prev[1] + ' / ' + note).strip(' /') if note else prev[1]]
 
 INFO = """() => { const a = YUNI.act; const L = YUNI.lesson; if (!a || !L) return null; const p = a.prob;
+  if (a.type === 'multi') return { type: 'multi', s: L.s, i: L.i, input: 'multi', flash: !!a.flash, chal: false, review: false, lv: a.lv, answers: a.probs.map(x => String(x.answer)), sig: JSON.stringify(a.probs.map(x => x.expr)) };
   return { type: a.type, s: L.s, i: L.i, input: p ? p.input : (a.type === 'greet' ? 'frame' : null),
     answer: p ? String(p.answer) : (a.type === 'greet' ? String(new Date().getDate()) : null),
     choices: p && p.choices ? p.choices.map(String) : null, given: p && p.frame ? p.frame.given : 0,
@@ -87,6 +89,16 @@ async def type_pad(pg, val):
         await pg.click(f'.pad [data-act=key][data-arg="{ch}"]')
     await pg.click('.pad [data-act=ok]')
 
+def parse_time(label):
+    m = re.match(r'(\d+)시(?: (\d+)분)?', label); return int(m.group(1)), int(m.group(2) or 0)
+
+async def answer_clock(pg, label, wrong=False):
+    """시계 바늘 놓기(v0.6.0): 앱의 setHands로 바늘을 놓고 ✔. wrong=True면 한 시간 다른 곳에"""
+    h, m = parse_time(label)
+    if wrong: h = h % 12 + 1
+    await pg.evaluate(f"YUNI.handlers.setHands({h}, {m})")
+    await pg.click('.clockset [data-act=ok]')
+
 async def answer_frame(pg, n, given, drag=False):
     await pg.click('[data-act=clear]')
     k = 0
@@ -103,7 +115,7 @@ REVEAL_SKIP = []   # 3번 틀린 뒤 "다음 ▶"으로 넘어간 문제 (MREQ-6
 async def play_day(pg, tag, wrong_every=0, reveal_once=False, prev_test=False, expect=None):
     """하루치를 끝까지 풀어요. wrong_every=N이면 N번째 문제마다 한 번 틀리고 다시 맞히기(별 +1 확인),
     reveal_once면 두 문제를 3번 틀려서 정답 보기: 첫 문제는 정답을 직접 넣고(별 +1), 둘째 문제는 "다음 ▶"으로 넘어가요(별 0) — 공통 64번"""
-    seen_prob = 0; revealed = 0; prev_done = False; shots = set(); frame_drag_done = False
+    seen_prob = 0; revealed = 0; prev_done = False; shots = set(); frame_drag_done = False; clock_drag_done = False
     for _ in range(400):
         scr = await wait_ready(pg)
         if scr == 'reward': return True
@@ -111,7 +123,7 @@ async def play_day(pg, tag, wrong_every=0, reveal_once=False, prev_test=False, e
         info = await pg.evaluate(INFO)
         key = (info['s'], info['i'])
         # 모든 문제 화면에 ◀ 이전 버튼 (MREQ-17)
-        if info['type'] in ('prob', 'greet', 'concept', 'explain'):
+        if info['type'] in ('prob', 'greet', 'concept', 'explain', 'multi'):
             check('MREQ-17', await pg.locator('.topbar [data-act=prev]').count() == 1, '')
         shotkey = f"{info['type']}-{info['input']}-{info['flash']}"
         if shotkey not in shots and len(shots) < 12:
@@ -129,6 +141,25 @@ async def play_day(pg, tag, wrong_every=0, reveal_once=False, prev_test=False, e
                 await pg.click('[data-act=selfok]')
             await pg.wait_for_selector('#nextRow:not([hidden]) [data-act=next]', timeout=8000)
             await pg.click('#nextRow [data-act=next]'); await wait_change(pg, key); continue
+        if t == 'multi':
+            # 반짝 연산 여러 문제 한 화면 (v0.6.0, MREQ-41): 줄을 누르고 패드로 답을 넣어요. wrong_every면 한 문제는 한 번 틀렸다가 맞히기
+            check('MREQ-41', await pg.locator('.mrow').count() == len(info['answers']) and await pg.locator('.pad .key').count() == 12, f"한 화면에 {len(info['answers'])}문제 + 패드")
+            if 'multi' not in shots: shots.add('multi'); await pg.screenshot(path=f"{SHOT}/{tag}-multi.png")
+            for k, a in enumerate(info['answers']):
+                seen_prob += 1
+                await pg.click(f'#mr{k}')
+                s0 = await state(pg, 'YUNI.state.stars'); day0 = await state(pg, f"(YUNI.state.log[{DAY_JS}(0)] || {{}}).stars || 0")
+                if wrong_every and seen_prob % wrong_every == 0:
+                    wv = wrong_value(a)
+                    if wv:
+                        await type_pad(pg, wv); await pg.wait_for_timeout(100)
+                        hint = await pg.locator(f'#mh{k}').inner_text()
+                        check('MREQ-07', hint and '땡' not in hint and '❌' not in hint, '반짝 연산 힌트')
+                        check('MREQ-41', await state(pg, 'YUNI.state.stars') == s0, '틀려도 별 그대로')
+                await type_pad(pg, a); await pg.wait_for_timeout(80)
+                if day0 < 47 and k < len(info['answers']) - 1:
+                    check('MREQ-41', await state(pg, 'YUNI.state.stars') == s0 + 1, f'문제마다 별 +1 ({k + 1}번)')
+            await wait_change(pg, key); continue
         # 문제
         seen_prob += 1
         ans = info['answer']; inp = info['input']
@@ -142,6 +173,7 @@ async def play_day(pg, tag, wrong_every=0, reveal_once=False, prev_test=False, e
             if back['input'] == 'choice': await pg.click(f'[data-act=pick][data-arg="{back["answer"]}"]')
             elif back['input'] == 'pad': await type_pad(pg, back['answer'])
             elif back['input'] == 'frame': await answer_frame(pg, int(back['answer']), back['given'])
+            elif back['input'] == 'clockset': await answer_clock(pg, back['answer'])
             else: await pg.click('[data-act=next]')
             await wait_change(pg, (back['s'], back['i']))
             await wait_ready(pg)
@@ -160,12 +192,13 @@ async def play_day(pg, tag, wrong_every=0, reveal_once=False, prev_test=False, e
             wrongs = 1
         tried = []
         for w in range(wrongs):
-            wv = wrong_value(ans, info['choices'], tried) if inp != 'frame' else str(int(ans) - 1 - w if int(ans) > 3 else int(ans) + 1 + w)
+            wv = (ans + '!') if inp == 'clockset' else wrong_value(ans, info['choices'], tried) if inp != 'frame' else str(int(ans) - 1 - w if int(ans) > 3 else int(ans) + 1 + w)
             if wv is None: break
             tried.append(wv)
             if inp == 'choice': await pg.click(f'[data-act=pick][data-arg="{wv}"]')
             elif inp == 'pad': await type_pad(pg, wv)
             elif inp == 'frame': await answer_frame(pg, int(wv), info['given'])
+            elif inp == 'clockset': await answer_clock(pg, ans, wrong=True)
             await pg.wait_for_timeout(120)
             hint = await pg.locator('#hint').inner_text()
             check('MREQ-07', '땡' not in hint and '❌' not in hint, f'힌트 {w + 1}단계')
@@ -217,12 +250,25 @@ async def play_day(pg, tag, wrong_every=0, reveal_once=False, prev_test=False, e
         s0 = await state(pg, 'YUNI.state.stars'); day_stars0 = await state(pg, f"(YUNI.state.log[{DAY_JS}(0)] || {{}}).stars || 0")
         if inp == 'choice': await pg.click(f'[data-act=pick][data-arg="{ans}"]')
         elif inp == 'pad': await type_pad(pg, ans)
+        elif inp == 'clockset':
+            if not clock_drag_done:
+                # 바늘을 손가락으로 끌어서도 놓을 수 있어요 (MREQ-37): 긴바늘을 6(아래)으로 끌기
+                bb = await pg.locator('#cs svg').bounding_box(); cx, cy = bb['x'] + bb['width'] / 2, bb['y'] + bb['height'] / 2
+                ma0 = await pg.evaluate("+document.getElementById('mg').getAttribute('transform').match(/rotate[(]([0-9.]+)/)[1]")
+                import math; r0 = bb['width'] * 0.36; a0 = math.radians(ma0)
+                await pg.mouse.move(cx + r0 * math.sin(a0), cy - r0 * math.cos(a0)); await pg.mouse.down()
+                await pg.mouse.move(cx + r0 * 0.7, cy + r0 * 0.7, steps=4); await pg.mouse.move(cx, cy + r0, steps=4); await pg.mouse.up()
+                ma1 = await pg.evaluate("+document.getElementById('mg').getAttribute('transform').match(/rotate[(]([0-9.]+)/)[1]")
+                check('MREQ-37', ma1 == 180, f'긴바늘 끌어서 6에 놓기 ({ma0}° → {ma1}°)')
+                clock_drag_done = True
+            await answer_clock(pg, ans)
         elif inp == 'frame':
             await answer_frame(pg, int(ans), info['given'], drag=not frame_drag_done); frame_drag_done = True
         await wait_change(pg, key)
         # 하루 50개(문제 별 47개)가 찬 뒤에는 별이 안 늘어나니 그 전에만 확인해요
         if len(tried) == 1 and wrongs == 1 and day_stars0 < 47:
             s1 = await state(pg, 'YUNI.state.stars')
+            if await state(pg, "YUNI.screen !== 'lesson' && !(YUNI.lesson && YUNI.lesson.drill)"): s1 -= 3  # 하루 마지막 문제였으면 하루 끝 보너스 3개가 함께 들어와요
             check('MREQ-64', s1 == s0 + 1, f'두 번째 시도에 맞혀도 별 +1 ({inp})')
             check('MREQ-18', s1 == s0 + 1, '몇 번 만에 맞혀도 별 1개')
     raise Exception('하루가 끝나지 않았어요')
@@ -466,16 +512,31 @@ async def run_device(p, name, vw, vh, full):
         check('MREQ-08', rv and all(t in types for t in rv[:len(types)]), f'복습 유형 {rv}')
         await pg.click('[data-act=quit]')
 
-        # 연산 사다리 (MREQ-32): 반짝 연산을 모두 맞힌 날이 3일 연속이면 다음 칸
-        await pg.evaluate("(() => { const L = YUNI.state.ladder; L.rung = 0; L.streak = 0; L.lastDate = ''; })()")
+        # 연산 사다리 (MREQ-32): 반짝 연산을 모두 맞힌 날이 3일 연속이면 다음 칸 + 반짝 연산 레벨 (MREQ-41): 기준 이상인 날 하루 한 번 +1
+        await pg.evaluate("(() => { const L = YUNI.state.ladder; L.rung = 0; L.streak = 0; L.lastDate = ''; YUNI.state.flashLv = 0; YUNI.state.flashLvDate = ''; })()")
         for k in range(3):
             await pg.evaluate("YUNI.state.ladder.lastDate = ''")
             await pg.click('[data-act=picker]'); await pg.click('[data-act=unit][data-arg="2-4"]'); await pg.click('[data-act=day][data-arg="1"]'); await pg.click('[data-act=step][data-arg="3"]')
+            await wait_ready(pg)
+            if k == 0:
+                fl = await pg.evaluate("YUNI.lesson.acts.map(a => [a.type, a.lv, a.probs.length, a.probs.map(p => p.type)])")
+                check('MREQ-41', len(fl) == 2 and fl[0][0] == 'multi' and fl[0][1] == 0 and fl[1][1] == 1 and all(x[2] == 5 for x in fl), f'반짝 연산 2화면×5문제, 레벨 1→2: {fl[0][3]} / {fl[1][3]}')
+                check('MREQ-41', all(t in ('twoOne', 'carry', 'borrow', 'carry21', 'borrow21') for t in fl[0][3]), f'레벨 1 기본 난이도(두 자리+한 자리·받아올림·받아내림) {fl[0][3]}')
             await play_day(pg, f'{name}-ladder{k}')
+            if k == 0:
+                check('MREQ-41', await state(pg, 'YUNI.state.flashLv') == 1, '반짝 연산 모두 맞힌 날 → 레벨 +1')
+                check('MREQ-41', '반짝 연산 레벨 2' in await pg.locator('.reward').inner_text(), '하루 끝 화면에 레벨 안내')
             if k == 2: await pg.screenshot(path=f'{SHOT}/{name}-ladder-up.png')
             await pg.click('[data-act=home]')
         L = await state(pg, 'YUNI.state.ladder')
         check('MREQ-32', L['rung'] == 1 and L['badges'].get('1'), f"사다리 {L['rung'] + 1}칸, 배지 {list(L['badges'].keys())}")
+        check('MREQ-41', await state(pg, 'YUNI.state.flashLv') == 1, '같은 날 또 해도 레벨은 하루에 한 번만')
+        # 레벨은 내려가지 않아요: 반짝 연산을 다 틀려도 그대로
+        await pg.evaluate("YUNI.state.flashLvDate = ''")
+        await pg.click('[data-act=picker]'); await pg.click('[data-act=unit][data-arg="2-4"]'); await pg.click('[data-act=day][data-arg="2"]'); await pg.click('[data-act=step][data-arg="3"]')
+        await play_day(pg, f'{name}-flashwrong', wrong_every=1)
+        check('MREQ-41', await state(pg, 'YUNI.state.flashLv') == 1, '많이 틀린 날에도 레벨은 그대로')
+        await pg.click('[data-act=home]')
         await pg.click('[data-act=ladder]'); await pg.wait_for_timeout(200); await pg.screenshot(path=f'{SHOT}/{name}-ladder.png'); await pg.click('[data-act=home]')
 
         # 단원 마무리 도전 → 스티커 (MREQ-30)
@@ -668,16 +729,25 @@ async def unit_checks(p):
       };
       C.units.filter(u => u.ready).forEach(u => u.days.forEach((d, di) => d.items.forEach((it, ii) => { for (let i = 0; i < 40; i++) try { chk(Y.genProblem(it.g, it.p, `u${u.id}${di}${ii}${i}`), `${u.id}/${di + 1}/${it.g}`); } catch (e) { bad.push(['err', u.id, it.g, String(e)]); } })));
       C.ladder.forEach((l, i) => { for (let k = 0; k < 40; k++) try { chk(Y.genProblem('calc', l.p, 'l' + i + k, { concrete: false }), 'ladder' + i); } catch (e) { bad.push(['err', 'ladder', i, String(e)]); } });
+      C.flash.levels.forEach((l, i) => l.pool.forEach((p, j) => { for (let k = 0; k < 40; k++) try { const pr = Y.genProblem('calc', p, 'f' + i + j + k, { concrete: false }); chk(pr, 'flash' + i); if (!/□/.test(pr.expr)) bad.push(['flashexpr', i, pr.expr]); } catch (e) { bad.push(['err', 'flash', i, j, String(e)]); } }));
+      // v0.6.0 시계: 바늘 놓기(set)는 정각·30분만, 이야기(story)는 보기에 정답, 걸린 시간은 1~4시간
+      for (let k = 0; k < 200; k++) { const a = Y.genProblem('clock', { ask: 'set', step: 30 }, 'cs' + k), b = Y.genProblem('clock', { ask: 'story', step: 30 }, 'st' + k);
+        if (a.input !== 'clockset' || !/^[0-9]+시( 30분)?$/.test(a.answer) || a.clock.m % 30) bad.push(['clockset', a.answer]); chk(a, 'clockset'); chk(b, 'clockstory');
+        if (b.input === 'choice' && !/^[0-9]+시( 30분)?$/.test(b.answer)) bad.push(['clockstory', b.answer]); if (b.input === 'pad' && !(b.answer >= 1 && b.answer <= 4 && b.unit === '시간')) bad.push(['clockdur', b.answer]);
+        if (/[{][A-Z가-힣]+[}]/.test(b.q)) bad.push(['tpl', b.q]); }
       C.drill.ops.forEach(o => o.sizes.forEach(z => { for (let k = 0; k < 150; k++) try { chk(Y.genProblem('calc', z.p, 'd' + o.id + z.id + k, { concrete: false }), 'drill ' + o.id + z.id); } catch (e) { bad.push(['err', 'drill', o.id, z.id, String(e)]); } }));
       C.units.filter(u => u.ready).forEach(u => u.explain.forEach(ex => { if (ex.ans === undefined || (ex.choices && !ex.choices.map(String).includes(String(ex.ans)))) bad.push(['explain', u.id, ex.q]); }));
-      return { n, bad: bad.slice(0, 5), ready: C.units.filter(u => u.ready).map(u => u.sem), ladder: C.ladder.length, ops: C.drill.ops.map(o => o.id) };
+      const u25 = C.units.find(u => u.id === '2-5'); const asks = u25.days.flatMap(d => d.items.filter(it => it.g === 'clock').map(it => (it.p.ask || 'read') + ':' + (it.p.step || 60)));
+      return { n, bad: bad.slice(0, 5), ready: C.units.filter(u => u.ready).map(u => u.sem), ladder: C.ladder.length, ops: C.drill.ops.map(o => o.id), flash: [C.flash.levels.length, C.flash.per, C.flash.sets], asks };
     }""")
     check('MREQ-31', not r2['bad'], f"새 문제 생성기 {r2['n']}개 점검, 오류 {r2['bad']}")
     check('MREQ-30', r2['ready'].count('1-2') == 6 and r2['ready'].count('2-1') == 6 and r2['ready'].count('2-2') == 6, f"공부할 수 있는 단원: 1-2 {r2['ready'].count('1-2')}개, 2-1 {r2['ready'].count('2-1')}개, 2-2 {r2['ready'].count('2-2')}개")
     check('MREQ-32', r2['ladder'] == 20, f"연산 사다리 {r2['ladder']}칸")
+    check('MREQ-41', r2['flash'] == [8, 5, 2], f"반짝 연산 레벨 {r2['flash'][0]}개, 한 화면 {r2['flash'][1]}문제 × {r2['flash'][2]}")
+    check('MREQ-37', all(a.split(':')[1] in ('60', '30') for a in r2['asks']) and sum(a.startswith('set') for a in r2['asks']) >= 4 and sum(a.startswith('story') for a in r2['asks']) >= 3, f"시계 보기와 규칙 찾기: 정각·30분만, 바늘 놓기·시간 이야기 포함 {r2['asks']}")
     check('MREQ-39', r2['ops'] == ['add', 'sub', 'mul', 'div', 'mix'], f"연산 연습 종류 {r2['ops']}")
-    sp = await pg.evaluate("""() => ['3시 30분', '6×5=30', '45÷5=?', '15cm', '134cm=□m 34cm', '1시간=60분', '3군데'].map(YUNI.speakify)""")
-    check('MREQ-12', sp == ['세 시 삼십 분', '육 곱하기 오는 삼십', '사십오 나누기 오는?', '십오 센티미터', '백삼십사 센티미터는 몇 미터 삼십사 센티미터', '한 시간은 육십 분', '세 군데'], f'새 읽기 규칙 {sp}')
+    sp = await pg.evaluate("""() => ['3시 30분', '6×5=30', '45÷5=?', '15cm', '134cm=□m 34cm', '1시간=60분', '3군데', '지금 1시 30분이에요. 2시간 동안 놀았어요.'].map(YUNI.speakify)""")
+    check('MREQ-12', sp == ['세 시 삼십 분', '육 곱하기 오는 삼십', '사십오 나누기 오는?', '십오 센티미터', '백삼십사 센티미터는 몇 미터 삼십사 센티미터', '한 시간은 육십 분', '세 군데', '지금 한 시 삼십 분이에요. 두 시간 동안 놀았어요.'], f'새 읽기 규칙 {sp}')
     st = await pg.evaluate("""() => { let f = 0, e = 0, th = new Set(); for (let i = 0; i < 200; i++) { const pr = YUNI.genProblem('story', {kind: 'two', op: 'mix'}, 's' + i);
       if (/현이가|초록이가|은후가|윤이/.test(pr.q)) f++; if (pr.eunhoo != null) e++; th.add(pr.pic); } return {f, e, th: th.size}; }""")
     check('MREQ-06', st['f'] >= 60 and st['e'] >= 20 and st['th'] >= 9, f"친구가 나오는 이야기 {st['f']}/200, 은후 답 {st['e']}, 주제 그림 {st['th']}종")
@@ -694,7 +764,7 @@ def static_checks():
     check('MREQ-11', 'getHours' not in app and 'night' not in app.lower(), '밤 시간 잠금 없음')
     check('MREQ-16', "const KEY = 'yuni-math-v1'" in app and 'yuni-english-v1' not in app, '저장 키')
     check('MREQ-18', 'DAY_STAR_MAX = 50, DAY_BONUS = 3' in app, '별 규칙 상수 (하루 50개)')
-    check('MREQ-64', 'function award(solved)' in app and 'award(false)' in app and 'award(0)' not in app and 'award(3)' not in app, 'award(solved) 코드')
+    check('MREQ-64', 'function award(solved, sub)' in app and 'award(false)' in app and 'award(0)' not in app and 'award(3)' not in app, 'award(solved) 코드')
     check('MREQ-61', "parentPin: '1234'" in app and "const DEFAULT_PIN = '1234'" in app, '기본 암호 1234 (settings.parentPin)')
     check('MREQ-21', f'v{ver}' in spec and '현재 버전: **v' + ver in spec, f'기획서.md에 v{ver}')
     check('MREQ-34', not re.search(r'남은 시간|초시계|countdown|타이머 표시', app), '타이머·초시계 없음')
@@ -719,7 +789,7 @@ async def main():
     for rid in sorted(RESULTS, key=lambda x: (x[:4] != 'MREQ', x)):
         ok, note = RESULTS[rid]; allok &= ok
         print(f"{'OK  ' if ok else 'FAIL'} {rid}: {note[:160]}")
-    missing = [i for i in ids if i not in RESULTS and i not in ('MREQ-19', 'MREQ-37')]
+    missing = [i for i in ids if i not in RESULTS and i not in ('MREQ-19',)]
     if missing: print('자동 점검 없음(수동 확인):', ', '.join(sorted(missing)))
     print('\nALL OK' if allok else '\n실패가 있어요')
     sys.exit(0 if allok else 1)

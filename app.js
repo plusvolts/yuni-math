@@ -1,7 +1,7 @@
 /* 윤이 수학 — 앱 로직 (의존성 없음). 뼈대는 윤이 영어 v1.3.3에서 복사했어요. */
 (() => {
   'use strict';
-  const APP_VERSION = '0.5.0';
+  const APP_VERSION = '0.6.0';
   const C = window.CONTENT;
   const U = C.units;
   const READY = U.filter(u => u.ready);
@@ -25,6 +25,7 @@
       ladder: { rung: 0, streak: 0, lastDate: '', hist: [], badges: {} },
       explains: [], challenge: {}, reviewPick: null,
       drill: { date: '', round: 0, n: 0, total: 0 }, // 연산 연습 (v0.5.0)
+      flashLv: 0, flashLvDate: '', // 반짝 연산 레벨 (v0.6.0, MREQ-41): content.js flash.levels 번호, 내려가지 않아요
     };
   }
   function merge(o) {
@@ -467,6 +468,7 @@
     'big2+': '두 자리 덧셈', 'big2-': '두 자리 뺄셈', 'big3+': '세 자리 덧셈', 'big3-': '세 자리 뺄셈', mulBlank: '곱셈구구 □ 구하기', mulBig: '(두 자리)×(한 자리)', divBig: '(두 자리)÷(한 자리)',
     shapeName1: '모양 이름', shapeCorner1: '뾰족한 곳 세기', shapeCount1: '모양 세기', shapeName2: '도형 이름', shapeCorner2: '변·꼭짓점 세기', shapeCount2: '도형 세기',
     clock60: '몇 시', clock30: '몇 시 30분', clock5: '몇 시 몇 분(5분)', clock1: '몇 시 몇 분(1분)', clockAfter: '몇 시간·몇 분 뒤', clockBefore: '몇 시 몇 분 전', clockMin: '시간과 분', clockDay: '하루·1주일·1년',
+    clockSet: '시계 바늘 놓기', clockStory: '시간 이야기(몇 시가 될까)', clockDur: '걸린 시간(몇 시간)', // v0.6.0
     patShape: '무늬 규칙', patNum: '수의 규칙', patMul: '곱셈표 규칙',
     bigHund: '백·천 알기', bigMake: '자릿값으로 수 만들기', bigPlace: '숫자가 나타내는 값', bigSkip: '뛰어 세기', bigCmp: '큰 수 비교', bigRead: '수로 쓰기',
     lenRuler: '자로 길이 재기', lenMcm: 'm와 cm', lenAdd: '길이의 덧셈·뺄셈', sortCount: '분류해서 세기', sortMost: '가장 많은 것', chartCount: '그래프 읽기', chartMost: '그래프 가장 많은·적은 것', chartTotal: '표의 합계',
@@ -675,13 +677,17 @@
     const out = []; for (const [x, y] of c) { const l = tlabel(x, y); if (l !== tlabel(h, m) && !out.includes(l)) out.push(l); }
     return shuffle([tlabel(h, m), ...out.slice(0, 3)], r);
   }
-  function clockSvg(h, m, ticks) {
+  // opts.set = true면 바늘을 손으로 움직이는 시계(v0.6.0): 바늘에 id(hh·mh)와 넓은 손잡이를 붙여요
+  function clockSvg(h, m, ticks, opts = {}) {
     const nums = Array.from({ length: 12 }, (_, i) => { const t = (i + 1) * 30 * Math.PI / 180; return `<text x="${(100 + 74 * Math.sin(t)).toFixed(1)}" y="${(100 - 74 * Math.cos(t) + 8).toFixed(1)}" text-anchor="middle" font-size="22" font-weight="800" fill="#223">${i + 1}</text>`; }).join('');
     const tk = Array.from({ length: 60 }, (_, i) => { const t = i * 6 * Math.PI / 180, big = i % 5 === 0; if (!ticks && !big) return ''; const r1 = big ? 86 : 89; return `<line x1="${(100 + r1 * Math.sin(t)).toFixed(1)}" y1="${(100 - r1 * Math.cos(t)).toFixed(1)}" x2="${(100 + 94 * Math.sin(t)).toFixed(1)}" y2="${(100 - 94 * Math.cos(t)).toFixed(1)}" stroke="#556" stroke-width="${big ? 3 : 1.5}"/>`; }).join('');
-    const ha = ((h % 12) + m / 60) * 30, ma = m * 6;
-    return `<svg class="clock" viewBox="0 0 200 200" width="230" height="230" role="img" aria-label="시계"><circle cx="100" cy="100" r="96" fill="#fff" stroke="#22a06b" stroke-width="6"/>${tk}${nums}
-      <line x1="100" y1="100" x2="100" y2="48" stroke="#e8590c" stroke-width="8" stroke-linecap="round" transform="rotate(${ha} 100 100)"/>
-      <line x1="100" y1="100" x2="100" y2="24" stroke="#1d4ed8" stroke-width="5" stroke-linecap="round" transform="rotate(${ma} 100 100)"/><circle cx="100" cy="100" r="6" fill="#223"/></svg>`;
+    const ha = opts.ha != null ? opts.ha : ((h % 12) + m / 60) * 30, ma = opts.ma != null ? opts.ma : m * 6;
+    const size = opts.size || 230;
+    const grip = opts.set ? `<g id="hg" class="hand hour" transform="rotate(${ha} 100 100)"><line x1="100" y1="108" x2="100" y2="48" stroke="#e8590c" stroke-width="9" stroke-linecap="round"/><circle cx="100" cy="52" r="13" fill="#e8590c" fill-opacity=".25"/></g>
+      <g id="mg" class="hand min" transform="rotate(${ma} 100 100)"><line x1="100" y1="108" x2="100" y2="22" stroke="#1d4ed8" stroke-width="6" stroke-linecap="round"/><circle cx="100" cy="28" r="13" fill="#1d4ed8" fill-opacity=".25"/></g>` : '';
+    return `<svg class="clock${opts.set ? ' setclock' : ''}" viewBox="0 0 200 200" width="${size}" height="${size}" role="img" aria-label="시계"><circle cx="100" cy="100" r="96" fill="#fff" stroke="#22a06b" stroke-width="6"/>${tk}${nums}
+      ${grip || `<line x1="100" y1="100" x2="100" y2="48" stroke="#e8590c" stroke-width="8" stroke-linecap="round" transform="rotate(${ha} 100 100)"/>
+      <line x1="100" y1="100" x2="100" y2="24" stroke="#1d4ed8" stroke-width="5" stroke-linecap="round" transform="rotate(${ma} 100 100)"/>`}<circle cx="100" cy="100" r="6" fill="#223"/></svg>`;
   }
   function rulerSvg(s0, n) {
     const L = 14, W = 30; let tk = '';
@@ -800,6 +806,33 @@
       const ask = p.ask || 'read'; const step = p.step || 60;
       const h = ri(r, 1, 12); let m = step === 60 ? 0 : step === 30 ? (r() < 0.75 ? 30 : 0) : step === 5 ? 5 * ri(r, 1, 11) : ri(r, 1, 59);
       if (step === 1 && m % 5 === 0) m += 1 + Math.floor(r() * 3);
+      if (ask === 'set') { // v0.6.0: 시계 바늘을 직접 놓기 (정각·30분만). 글(시각)을 읽고 긴바늘·짧은바늘을 움직여요
+        const mm = step === 60 ? 0 : (r() < 0.7 ? 30 : 0); const t = tlabel(h, mm);
+        const f = C.friends[pick(['hyun', 'chorok', 'eunhoo'], r)];
+        const q = r() < 0.4 ? pick([`${f.subj} ${t}에 일어났어요. 시계에 ${J(t, '을', '를')} 만들어 봐요.`, `${t}에 곤충 관찰을 시작해요. 시계 바늘을 ${t}에 놓아 봐요.`, `로봇이 ${t}에 움직여요. 시계를 ${J(t, '으로', '로')} 맞춰 봐요.`], r)
+          : `시계 바늘을 움직여서 ${J(t, '을', '를')} 만들어 봐요.`;
+        return { mode: 8, input: 'clockset', q, answer: t, type: 'clockSet', vis: null, clock: { h, m: mm, step, h0: (h + 4) % 12 + 1, m0: mm ? 0 : 30 },
+          hint1: mm ? '긴바늘을 6에 놓아요. 짧은바늘은 두 숫자 사이에 놓아요.' : '긴바늘을 12에 놓아요. 짧은바늘은 숫자를 똑바로 가리켜요.',
+          steps: [`긴바늘: ${mm ? '6 (30분)' : '12 (정각)'}`, `짧은바늘: ${mm ? `${h}${josa(h, '과', '와')} ${h % 12 + 1} 사이` : `${h}`}`, `그러면 ${t}`] };
+      }
+      if (ask === 'story') { // v0.6.0: 시간 이야기 문제 (문해력). 몇 시간 뒤·30분 뒤·몇 시간 전·걸린 시간. 정각·30분만
+        const CS = C.clockStories; const kind = pick(['after', 'after', 'after', 'half', 'before', 'dur', 'dur'], r);
+        const m0 = step === 60 ? 0 : (r() < 0.5 ? 30 : 0); const T = tlabel(h, m0); const f = C.friends[pick(['hyun', 'chorok', 'eunhoo'], r)];
+        const fill = (tpl, v) => { const q = v.m1 ? '몇 시 몇 분' : '몇 시'; return tpl.text.replace(/\{F\}/g, f.subj).replace(/\{T이에요\}/g, T + josa(T, '이에요', '예요')).replace(/\{T\}/g, T).replace(/\{K\}/g, v.K).replace(/\{E\}/g, v.E || '')
+          .replace(/\{몇시가\}/g, q + josa(q, '이', '가')).replace(/\{몇시에\}/g, q + '에').replace(/\{몇시일까요\}/g, q + '일까요'); };
+        const hh = x => ((x % 12) + 12) % 12 || 12;
+        if (kind === 'dur') {
+          const K = ri(r, 1, 4); const h1 = hh(h + K); const E = tlabel(h1, m0); const tpl = pick(CS.dur, r);
+          return { mode: 8, input: 'pad', q: fill(tpl, { K, E }), answer: K, unit: '시간', type: 'clockDur', pic: tpl.pic, vis: { kind: 'clock2', a: [h, m0], b: [h1, m0] },
+            hint1: '짧은바늘이 숫자 몇 칸 갔는지 세어 봐요. 한 칸이 1시간이에요.', steps: [`${T}에서 ${E}까지`, `짧은바늘이 ${h}에서 ${h1}까지 ${K}칸 갔어요.`, `${K}시간`] };
+        }
+        const K = kind === 'half' ? 0 : ri(r, 1, 3); const delta = kind === 'half' ? 30 : K * 60; const t1 = (((h * 60 + m0 + (kind === 'before' ? -delta : delta)) % 720) + 720) % 720;
+        const h1 = hh(Math.floor(t1 / 60)), m1 = t1 % 60; const ans = tlabel(h1, m1); const tpl = pick(CS[kind], r);
+        const how = kind === 'half' ? '30분' : `${K}시간`, dir = kind === 'before' ? '전' : '뒤';
+        return { mode: 8, input: 'choice', q: fill(tpl, { K, m1 }), answer: ans, choices: clockChoices(r, h1, m1, 30), type: 'clockStory', pic: tpl.pic, vis: { kind: 'svg', svg: clockSvg(h, m0, false) },
+          hint1: kind === 'half' ? '30분 뒤면 긴바늘이 반 바퀴 가요.' : `${how} ${dir}면 짧은바늘이 숫자 ${K}칸 ${kind === 'before' ? '뒤로' : '앞으로'} 가요.`,
+          steps: [`${T}에서 ${how} ${dir}`, kind === 'half' ? `긴바늘이 ${m0 ? '6에서 12로' : '12에서 6으로'} 가요.` : `짧은바늘이 ${h}에서 ${h1}${josa(h1, '으로', '로')} 가요.`, `정답은 ${ans}`] };
+      }
       if (ask === 'min') { // 1시간 20분 = 몇 분
         const hh = ri(r, 1, 2), mm = 5 * ri(r, 1, 11); const ans = hh * 60 + mm;
         return { mode: 8, input: 'pad', q: `${hh}시간 ${mm}분은 몇 분일까요?`, answer: ans, type: 'clockMin', unit: '분', vis: null,
@@ -991,8 +1024,12 @@
           .concat(flattenItems(day.items).map((it, i) => ({ type: 'prob', prob: genProblem(it.g, it.p, seedOf(s, i)) })));
       }
     } else if (id === 'flash') {
-      const rung = S.ladder.rung; const lr = C.ladder[rung];
-      acts = [0, 1, 2, 3, 4].map(i => ({ type: 'prob', flash: true, prob: genProblem('calc', lr.p, seedOf(s, i, `|r${rung}`), { concrete: rung < 7, eunhoo: false }) }));
+      // v0.6.0 (MREQ-41): 반짝 연산은 레벨(content.js flash.levels)에서 한 화면에 per문제씩 sets화면. 두 번째 화면은 한 레벨 위
+      const F = C.flash; const lv0 = Math.min(F.levels.length - 1, Math.max(0, Number(S.flashLv) || 0));
+      acts = Array.from({ length: F.sets }, (_, si) => {
+        const lv = Math.min(F.levels.length - 1, lv0 + si); const pool = shuffle(F.levels[lv].pool, rngFrom(seedOf(s, si, `|L${lv}|pick`)));
+        return { type: 'multi', flash: true, lv, probs: Array.from({ length: F.per }, (_, i) => genProblem('calc', pool[i % pool.length], seedOf(s, si * 10 + i, `|L${lv}`), { concrete: false, eunhoo: false })) };
+      });
     } else {
       const ex = un.explain[(L.d - 1) % un.explain.length]; const asker = L.d % 2 ? 'hyun' : 'chorok';
       acts = [{ type: 'prob', teach: true, ex, asker, prob: teachProb(ex, asker) }];
@@ -1030,8 +1067,8 @@
   // 별 (공통 64번, v0.3.1): 몇 번째 시도든 윤이가 정답을 넣으면 1개(solved=true), 못 맞히고 "다음 ▶"으로 넘어가면 0개(solved=false).
   // 문제당 한 번만, 하루 끝 보너스 3개, 하루치(날짜 기준) 합계 50개 이하 (v0.1.1: 20 → 50)
   const DAY_STAR_MAX = 50, DAY_BONUS = 3;
-  function award(solved) {
-    const key = `${L.s}:${L.i}`;
+  function award(solved, sub) {
+    const key = `${L.s}:${L.i}${sub != null ? ':' + sub : ''}`; // sub: 한 화면에 여러 문제(반짝 연산)일 때 문제 번호
     let n = solved ? 1 : 0;
     if (L.awarded[key] || todayLog().stars >= DAY_STAR_MAX - DAY_BONUS) n = 0; // 이전 버튼으로 다시 풀어도 별은 한 번만
     L.awarded[key] = 1;
@@ -1042,8 +1079,8 @@
     return n;
   }
   // 첫 번째 답으로 기록: 유형별 정답률, 틀린 유형 복습(1·3·7일), 마무리 도전·반짝 연산 점수
-  function record(a, ok) {
-    const key = `${L.s}:${L.i}`; if (L.first[key] !== undefined) return; L.first[key] = ok;
+  function record(a, ok, sub) {
+    const key = `${L.s}:${L.i}${sub != null ? ':' + sub : ''}`; if (L.first[key] !== undefined) return; L.first[key] = ok;
     const pr = a.prob; const t = pr.type;
     const st = S.stats[t] || (S.stats[t] = { label: pr.label, n: 0, ok: 0 }); st.n++; if (ok) st.ok++; st.label = pr.label;
     const lg = todayLog(); lg.n++; if (ok) lg.ok++;
@@ -1098,7 +1135,7 @@
   }
   function showAct() {
     const a = L.acts[L.i];
-    ({ greet: actGreet, msg: actMsg, concept: actConcept, prob: actProb })[a.type](a);
+    ({ greet: actGreet, msg: actMsg, concept: actConcept, prob: actProb, multi: actMulti })[a.type](a);
   }
   function actMsg(a) {
     render('lesson', lessonFrame(`<div class="prompt"><div class="robot">🤖</div><div class="bubble">${esc(a.text)}</div></div>
@@ -1142,6 +1179,7 @@
     // v0.5.0 그림
     if (v.kind === 'groups') { const em = v.emoji || '🟢'; const tot = v.size * v.n; return `<div class="groups${tot > 30 ? ' sm' : ''}">${Array.from({ length: v.n }, () => `<span class="grp">${Array.from({ length: v.size }, () => `<i>${em}</i>`).join('')}</span>`).join('')}</div>`; }
     if (v.kind === 'svg') return `<div class="svgvis">${v.svg}</div>`;
+    if (v.kind === 'clock2') return `<div class="svgvis clocks">${clockSvg(v.a[0], v.a[1], false, { size: 170 })}<b class="opm">→</b>${clockSvg(v.b[0], v.b[1], false, { size: 170 })}</div>`; // v0.6.0 걸린 시간
     if (v.kind === 'shapes') return `<div class="shapes">${v.svgs.join('')}</div>`;
     if (v.kind === 'seq') return `<div class="seq">${v.items.map(x => `<span>${x}</span>`).join('')}<span class="blank">?</span></div>`;
     if (v.kind === 'places') return `<div class="places">${v.ds.map((d, i) => `<span class="pgrp">${Array.from({ length: d }, () => `<b class="pv p${v.units[i]}">${v.units[i]}</b>`).join('') || '<em>없음</em>'}</span>`).join('')}</div>`;
@@ -1204,6 +1242,13 @@
         <div class="pad">${[1, 2, 3, 4, 5, 6, 7, 8, 9].map(k => `<button class="key" data-act="key" data-arg="${k}">${k}</button>`).join('')}
         <button class="key del" data-act="del" aria-label="지우기">⌫</button><button class="key" data-act="key" data-arg="0">0</button><button class="key ok" data-act="ok" aria-label="확인">✔</button></div></div>`;
     }
+    if (pr.input === 'clockset') { // v0.6.0: 시계 바늘 놓기 — 바늘을 끌거나, 바늘을 고른 뒤 숫자를 톡 눌러요
+      const c = pr.clock;
+      return `<div class="clockset"><div class="svgvis" id="cs">${clockSvg(c.h0, c.m0, false, { set: true, size: 260 })}</div>
+        <div class="cs-tools"><button class="btn small hand-btn on" data-act="hand" data-arg="h" id="hbH">🟠 짧은바늘 (시)</button><button class="btn small hand-btn" data-act="hand" data-arg="m" id="hbM">🔵 긴바늘 (분)</button></div>
+        <div class="muted" style="font-weight:700">바늘을 끌어서 움직이거나, 바늘을 고르고 숫자를 눌러요</div>
+        <div class="next-row"><button class="btn good" data-act="ok">✔ 다 놓았어요</button></div></div>`;
+    }
     // frame: 10칸 상자에 구슬 넣기 (끌어놓기 또는 톡 누르기)
     return `<div class="framewrap">${framesHtml([pr.frame.given], pr.frame.cap, 0, 'fz')}
       <div class="tray"><button class="marble" data-act="add" aria-label="구슬 넣기"></button><span class="muted">구슬을 끌어다 놓거나 눌러요</span></div>
@@ -1212,7 +1257,7 @@
   const sayGuess = pr => { const w = `${pr.eunhoo}${pr.unit || ''}`; return w + josa(w, '이라고', '라고'); };
   function actProb(a) {
     const pr = a.prob; const att = { n: 0, done: false }; let typed = '';
-    const tag = a.greet ? '오늘의 수' : a.teach ? '가르쳐주기' : a.drill ? '연산 연습' : a.flash ? `사다리 ${S.ladder.rung + 1}칸` : a.chal ? '마무리 도전' : a.review ? '복습' : MODES[pr.mode];
+    const tag = a.greet ? '오늘의 수' : a.teach ? '가르쳐주기' : a.drill ? '연산 연습' : a.flash ? `레벨 ${(Number(S.flashLv) || 0) + 1}` : a.chal ? '마무리 도전' : a.review ? '복습' : MODES[pr.mode];
     const ansWord = () => `${pr.sayAns || pr.answer}${pr.unit ? pr.unit : ''}`;
     const f = pr.friend && C.friends[pr.friend];
     const showVis = pr.vis && (pr.mode !== 5 || pr.showVis);
@@ -1266,7 +1311,7 @@
         const vb = document.getElementById('visbox'); if (vb && vb.hidden && pr.vis) vb.hidden = false;
         await koSeq(['같이 풀어 보자.', ...pr.steps]);
       } else if (att.n === 3) {
-        hint.innerHTML = `✨ 정답은 <b>${esc(pr.answer)}</b><br>${pr.steps.map(esc).join('<br>')}<br>⭐ 정답을 넣으면 별을 받아요`;
+        hint.innerHTML = `✨ 정답은 <b>${esc(pr.answer)}</b><br>${pr.steps.map(esc).join('<br>')}<br>⭐ 정답을 넣으면 별을 받아요${pr.input === 'clockset' ? `<div class="svgvis">${clockSvg(pr.clock.h, pr.clock.m, false, { size: 120 })}</div>` : ''}`;
         document.querySelectorAll('.choice').forEach(c => { if (c.dataset.arg === String(pr.answer)) c.classList.add('glow'); });
         if (pr.input === 'frame') fillTo(0);
         if (pr.input === 'pad') { typed = ''; showTyped(); }
@@ -1285,16 +1330,26 @@
     const drawFrame = () => { document.querySelectorAll('#fz .cell').forEach((c, i) => { c.className = 'cell' + (fz[i] === 'g' ? ' a' : fz[i] === 'b' ? ' b' : ''); }); };
     const addOne = () => { const i = fz.indexOf(''); if (i < 0) return; fz[i] = 'b'; pop(); drawFrame(); };
     function fillTo(k) { fz = fz.map(x => (x === 'b' ? '' : x)); for (let j = 0; j < k; j++) { const i = fz.indexOf(''); if (i >= 0) fz[i] = 'b'; } drawFrame(); }
+    // 시계 바늘 놓기 (v0.6.0): cs = { ha: 짧은바늘 각도(15° 단위), ma: 긴바늘 각도(0·180), sel: 고른 바늘 }
+    let cs = null;
+    if (pr.input === 'clockset') cs = { ha: ((pr.clock.h0 % 12) + pr.clock.m0 / 60) * 30, ma: pr.clock.m0 * 6, sel: 'h' };
+    const csValue = () => { const mm = cs.ma === 180 ? 30 : cs.ma === 0 ? 0 : -1; const half = cs.ha % 30 === 15; if (mm < 0 || cs.ha % 15 !== 0 || half !== (mm === 30)) return `${cs.ha}|${cs.ma}`; return tlabel(Math.floor(cs.ha / 30) || 12, mm); };
+    const csButtons = () => { const hb = document.getElementById('hbH'), mb = document.getElementById('hbM'); if (hb) hb.classList.toggle('on', cs.sel === 'h'); if (mb) mb.classList.toggle('on', cs.sel === 'm'); };
+    const csDraw = () => { const hg = document.getElementById('hg'), mg = document.getElementById('mg'); if (hg) hg.setAttribute('transform', `rotate(${cs.ha} 100 100)`); if (mg) mg.setAttribute('transform', `rotate(${cs.ma} 100 100)`); };
+    const csSet = (h, m) => { cs.ha = ((h % 12) + m / 60) * 30; cs.ma = m * 6; csDraw(); }; // 테스트·아빠 확인용
     const handlers = {
       ...baseHandlers(),
+      setHands: (h, m) => { if (cs && !att.done) csSet(+h, +m); },
       play: () => { hush(); sayQ(); },
       next: () => { if (!att.done) { att.done = true; award(false); if (a.teach) teachLog(a, '(넘어감)', false); } nextAct(); },
       helper: (x, btn) => { const vb = document.getElementById('visbox'); vb.hidden = false; btn.remove(); },
       pick: (arg, btn) => { if (att.done || btn.classList.contains('wrong')) return; if (String(arg) === String(pr.answer)) { btn.classList.add('right'); check(arg); } else { btn.classList.add('wrong'); check(arg); } },
       key: k => { if (att.done) return; const len = String(pr.answer).length; if (typed.length >= len) return; typed += k; showTyped(); },
       del: () => { if (att.done) return; typed = typed.slice(0, -1); showTyped(); },
+      hand: a => { if (att.done || !cs) return; cs.sel = a; csButtons(); },
       ok: () => {
         if (att.done) return;
+        if (pr.input === 'clockset') { check(csValue()); return; }
         if (pr.input === 'pad') { if (typed.length < String(pr.answer).length) { toast('칸을 모두 채워요'); return; } const v = +typed; typed = ''; if (String(v) !== String(pr.answer)) setTimeout(showTyped, 700); check(v); }
         else check(added());
       },
@@ -1305,6 +1360,7 @@
     };
     function showTyped() { const len = String(pr.answer).length; for (let k = 0; k < len; k++) { const el = document.getElementById('d' + k); if (el) el.textContent = typed[k] || ''; } }
     render('lesson', lessonFrame(left + right, { split: true, tag }), handlers);
+    if (pr.input === 'clockset') setupClockSet(document.querySelector('#cs svg'), cs, () => { if (att.done) return false; csDraw(); csButtons(); return true; });
     if (pr.input === 'frame') {
       fz = Array.from({ length: pr.frame.cap }, (_, i) => (i < pr.frame.given ? 'g' : ''));
       const box = document.getElementById('fz');
@@ -1346,6 +1402,83 @@
       window.addEventListener('pointermove', mv); window.addEventListener('pointerup', up); window.addEventListener('pointercancel', up);
     });
     marble.addEventListener('click', e => { if (marble.dataset.moved) { e.stopPropagation(); marble.dataset.moved = ''; } }, true);
+  }
+
+  // 시계 바늘 움직이기 (v0.6.0, MREQ-37): 바늘 가까이를 누르면 그 바늘을 잡아 끌고, 숫자를 누르면 고른 바늘이 그리로 가요.
+  // 짧은바늘은 15°(30분)마다, 긴바늘은 12·6에만 딱 붙어요 (정각·30분만 다루니까요)
+  function setupClockSet(svg, cs, onChange) {
+    if (!svg) return;
+    const angleOf = ev => { const rc = svg.getBoundingClientRect(); const dx = ev.clientX - (rc.left + rc.width / 2), dy = ev.clientY - (rc.top + rc.height / 2); return (Math.atan2(dx, -dy) * 180 / Math.PI + 360) % 360; };
+    const dist = (a, b) => { const d = Math.abs(a - b) % 360; return Math.min(d, 360 - d); };
+    const snap = (ang, hand) => hand === 'h' ? Math.round(ang / 15) * 15 % 360 : Math.round(ang / 180) * 180 % 360;
+    const apply = ev => { const v = snap(angleOf(ev), cs.sel); const k = cs.sel === 'h' ? 'ha' : 'ma'; if (cs[k] !== v) { cs[k] = v; pop(); } onChange(); };
+    svg.addEventListener('pointerdown', ev => {
+      ev.preventDefault(); const ang = angleOf(ev); const dh = dist(ang, cs.ha), dm = dist(ang, cs.ma);
+      if (dh <= 22 && dh <= dm) cs.sel = 'h'; else if (dm <= 22) cs.sel = 'm';
+      if (!onChange()) return;
+      apply(ev); try { svg.setPointerCapture(ev.pointerId); } catch (e) { /* */ }
+      const mv = e2 => apply(e2);
+      const up = () => { svg.removeEventListener('pointermove', mv); svg.removeEventListener('pointerup', up); svg.removeEventListener('pointercancel', up); };
+      svg.addEventListener('pointermove', mv); svg.addEventListener('pointerup', up); svg.addEventListener('pointercancel', up);
+    });
+  }
+
+  /* ---------- 반짝 연산: 한 화면에 여러 문제 (v0.6.0, MREQ-41) ----------
+     왼쪽에 문제 다섯 줄, 오른쪽에 숫자 패드 하나. 줄을 누르거나 맞히면 다음 줄로 넘어가요. 별·힌트·정답 보기는 문제마다 따로 (공통 64번 그대로) */
+  function actMulti(a) {
+    const probs = a.probs; const n = probs.length; const st = probs.map(() => ({ n: 0, done: false, typed: '' })); let cur = 0;
+    const lvName = C.flash.levels[a.lv].name; const tag = `레벨 ${a.lv + 1}`;
+    const rowHtml = (pr, k) => `<div class="mrow${k === 0 ? ' on' : ''}" data-act="sel" data-arg="${k}" id="mr${k}">
+        <span class="mno">${k + 1}</span><span class="mexpr">${esc(pr.expr).replace('□', `<span class="qbox mans" id="ma${k}">□</span>`)}</span><span class="mst" id="ms${k}"></span>
+        <div class="hintbox mhint" id="mh${k}" hidden></div></div>`;
+    const left = `<div class="prompt multi">
+        <div class="bubble">반짝 연산! ${n}문제를 풀어요<small>${esc(lvName)} · 문제를 누르고 숫자를 넣어요</small></div>
+        <div class="mlist">${probs.map(rowHtml).join('')}</div>
+        <div class="listen-row"><button class="listen" data-act="play" aria-label="문제 듣기">🔊</button></div>
+      </div>`;
+    const right = `<div class="prompt"><div class="padwrap"><div class="mcur" id="mcur"></div><div class="pad">${[1, 2, 3, 4, 5, 6, 7, 8, 9].map(k => `<button class="key" data-act="key" data-arg="${k}">${k}</button>`).join('')}
+        <button class="key del" data-act="del" aria-label="지우기">⌫</button><button class="key" data-act="key" data-arg="0">0</button><button class="key ok" data-act="ok" aria-label="확인">✔</button></div></div>
+      <div class="next-row" id="nextRow" hidden><button class="btn primary" data-act="next">다음 ▶</button></div></div>`;
+    const lenOf = k => String(probs[k].answer).length;
+    const showRow = k => { const el = document.getElementById('ma' + k); if (el) el.textContent = st[k].done ? probs[k].answer : (st[k].typed || '□'); };
+    const select = k => { cur = k; document.querySelectorAll('.mrow').forEach((el, i) => el.classList.toggle('on', i === k)); const c = document.getElementById('mcur'); if (c) c.textContent = `${k + 1}번 ${probs[k].expr.replace('=□', '')}`; };
+    const nextOpen = from => { for (let d = 1; d <= n; d++) { const k = (from + d) % n; if (!st[k].done) return k; } return -1; };
+    const allSettled = () => st.every((x, k) => x.done || x.n >= 3);
+    const sub = k => ({ prob: probs[k], flash: !!a.flash });
+    const finishAll = async () => { const my = actToken; hush(); const ok = st.filter(x => x.done).length; await ko(ok === n ? `${praise()} ${n}문제 다 풀었어!` : `${n}문제 끝! 잘했어!`); await sleep(500); if (my === actToken) nextAct(); };
+    const right_ = async k => {
+      st[k].done = true; ding(); const got = award(true, k); flash(got ? '⭐' : '👍'); record(sub(k), st[k].n === 0, k);
+      showRow(k); const ma = document.getElementById('ma' + k); if (ma) ma.classList.add('ok'); const ms = document.getElementById('ms' + k); if (ms) ms.textContent = got ? '⭐' : '✅';
+      const mh = document.getElementById('mh' + k); if (mh) mh.hidden = true; document.getElementById('mr' + k).classList.add('done');
+      const nx = nextOpen(k); if (nx >= 0) select(nx); else { document.getElementById('nextRow').hidden = true; finishAll(); }
+    };
+    const wrong_ = async k => {
+      const my = actToken; const pr = probs[k]; if (st[k].n === 0) record(sub(k), false, k); st[k].n++; hush();
+      const mh = document.getElementById('mh' + k); mh.hidden = false;
+      if (st[k].n === 1) { mh.innerHTML = `💡 ${esc(pr.hint1)}`; await ko(`${pick(LINES.retry || ['다시 해볼까?'])} ${pr.hint1}`); }
+      else if (st[k].n === 2) { mh.innerHTML = `🪜 ${pr.steps.map(esc).join('<br>')}`; await koSeq(['같이 풀어 보자.', ...pr.steps]); }
+      else if (st[k].n === 3) { mh.innerHTML = `✨ 정답은 <b>${esc(pr.answer)}</b><br>${pr.steps.map(esc).join('<br>')}<br>⭐ 정답을 넣으면 별을 받아요`; if (allSettled()) document.getElementById('nextRow').hidden = false; await ko(`${LINES.showAnswer || '괜찮아!'} 정답은 ${pr.answer}. 정답을 넣으면 별을 받아요!`); }
+      else await ko(`괜찮아, 천천히 해 보자. 정답은 ${pr.answer}.`);
+      if (my !== actToken) return;
+    };
+    const handlers = {
+      ...baseHandlers(),
+      sel: k => { k = +k; if (!st[k].done) select(k); },
+      play: () => { hush(); ko(probs[cur].expr.replace('=□', '=?')); },
+      key: d => { if (st[cur].done) return; if (st[cur].typed.length >= lenOf(cur)) return; st[cur].typed += d; showRow(cur); },
+      del: () => { if (st[cur].done) return; st[cur].typed = st[cur].typed.slice(0, -1); showRow(cur); },
+      ok: () => {
+        if (st[cur].done) return; const k = cur;
+        if (st[k].typed.length < lenOf(k)) { toast('칸을 모두 채워요'); return; }
+        const v = +st[k].typed; st[k].typed = ''; showRow(k);
+        if (String(v) === String(probs[k].answer)) right_(k); else wrong_(k);
+      },
+      next: () => { st.forEach((x, k) => { if (!x.done) { x.done = true; award(false, k); } }); nextAct(); },
+    };
+    render('lesson', lessonFrame(left + right, { split: true, tag }), handlers);
+    select(0);
+    const my = actToken;
+    (async () => { if (!L.heard.multi) { L.heard.multi = 1; await ko('반짝 연산! 천천히 해도 돼요.'); } if (my === actToken && L.i > 0) ko('이번에는 조금 더 어려워요!'); })();
   }
 
   /* ---------- 설명하기 (현이·초록이에게 가르쳐주기) ----------
@@ -1394,6 +1527,9 @@
       chalMsg = L.chal.ok >= 8 ? `마무리 도전 ${L.chal.ok} / ${L.chal.n} 성공!` : `마무리 도전 ${L.chal.ok} / ${L.chal.n}. 다음에 다시 도전해 봐요!`;
     }
     const up = ladderCheck();
+    // 반짝 연산 레벨 (v0.6.0, MREQ-41): 오늘 첫 시도 정답률이 기준 이상이면 하루 한 번 레벨 +1. 내려가지는 않아요
+    let lvUp = null; const F = C.flash;
+    if (L.flash.n >= F.per && S.flashLvDate !== today() && L.flash.ok / L.flash.n * 100 >= F.upPct && (Number(S.flashLv) || 0) < F.levels.length - 1) { S.flashLv = (Number(S.flashLv) || 0) + 1; S.flashLvDate = today(); lvUp = S.flashLv; }
     let nu = u, nd = d + 1; if (nd > un.days.length) { nd = 1; nu = nextReady(u); }
     S.pos = { u: nu, d: nd, s: 0 };
     const bonus = Math.max(0, Math.min(DAY_BONUS, DAY_STAR_MAX - todayLog().stars));
@@ -1406,6 +1542,7 @@
       ${chalMsg ? `<div class="bubble">🏁 ${esc(chalMsg)}</div>` : ''}
       ${newSticker ? `<div class="sticker-new">${un.sticker}</div><div class="bubble">${esc(un.title)} 스티커를 받았어요!</div>` : ''}
       ${up != null ? `<div class="sticker-new">🏅</div><div class="bubble">연산 사다리 ${up + 1}칸으로 올라갔어요!<small>${esc(C.ladder[up].name)}</small></div>` : ''}
+      ${lvUp != null ? `<div class="bubble">⚡ 반짝 연산 레벨 ${lvUp + 1}로 올라갔어요!<small>${esc(C.flash.levels[lvUp].name)}</small></div>` : ''}
       ${un.mission ? `<div class="card mission">🏠 집에서 하는 수학 미션<br>${esc(un.mission)}</div>` : ''}
       <div class="home-links">
         <button class="btn" data-act="ladder">🪜 연산 사다리</button>
@@ -1650,7 +1787,7 @@
         </div>
         <div class="row" style="margin-top:10px;flex-wrap:wrap"><button class="btn small primary" data-act="adjpos">이 진도로 바꾸기</button>
           <button class="btn small" data-act="resetprog">진도 초기화</button></div>
-        <p class="muted">진도 초기화: 진도·완료한 날·스티커·복습·정답률·연산 사다리를 처음으로 돌려요. 별·받은 보상·설정은 그대로예요.</p>
+        <p class="muted">진도 초기화: 진도·완료한 날·스티커·복습·정답률·연산 사다리·반짝 연산 레벨을 처음으로 돌려요. 별·받은 보상·설정은 그대로예요.</p>
       </div>
       <div class="card"><h3>🪜 연산 사다리 조정</h3>
         <p>지금: <b>${LD.rung + 1}칸 ${esc(C.ladder[LD.rung].name)}</b> · 기준을 넘은 날 ${LD.streak}일 연속</p>
@@ -1660,8 +1797,14 @@
           <label>정답률 기준<select data-set="ladderPct">${[80, 90, 100].map(v => `<option value="${v}"${Number(st.ladderPct) === v ? ' selected' : ''}>${v}% 이상</option>`).join('')}</select></label>
         </div>
         <div class="row" style="margin-top:10px"><button class="btn small primary" data-act="setrung">이 칸으로 바꾸기</button></div>
-        <p class="muted">반짝 연산은 하루 5문제라서 90%는 5문제를 모두 한 번에 맞혀야 해요. 너무 느리게 올라가면 80%로 바꿔 주세요.</p>
+        <p class="muted">반짝 연산 10문제의 첫 시도 정답률로 계산해요(v0.6.0). 너무 느리게 올라가면 80%로 바꿔 주세요.</p>
         ${LD.hist.length ? `<p class="muted">최근: ${LD.hist.slice(-7).map(h => `${h.date.slice(5)} ${h.rung + 1}칸 ${h.pct}%`).join(' · ')}</p>` : ''}
+      </div>
+      <div class="card"><h3>⚡ 반짝 연산 레벨 조정</h3>
+        <p>지금: <b>레벨 ${(Number(S.flashLv) || 0) + 1} ${esc(C.flash.levels[Math.min(C.flash.levels.length - 1, Number(S.flashLv) || 0)].name)}</b></p>
+        <div class="form"><label>레벨<select id="flashLv">${C.flash.levels.map((l, i) => `<option value="${i}"${(Number(S.flashLv) || 0) === i ? ' selected' : ''}>${i + 1}. ${esc(l.name)} (${esc(l.ex)})</option>`).join('')}</select></label></div>
+        <div class="row" style="margin-top:10px"><button class="btn small primary" data-act="setflash">이 레벨로 바꾸기</button></div>
+        <p class="muted">반짝 연산은 한 화면에 ${C.flash.per}문제씩 ${C.flash.sets}화면(두 번째 화면은 한 레벨 위). 첫 시도 정답률이 ${C.flash.upPct}% 이상인 날은 다음 날부터 한 레벨 올라가고, 내려가지는 않아요. 레벨 1이 기본(두 자리+한 자리, 받아올림, 받아내림)이에요.</p>
       </div>
       `)}
       ${ptabPanel('settings', `
@@ -1731,10 +1874,11 @@
       },
       resetprog: (x, btn) => {
         if (!btn.dataset.sure) { btn.dataset.sure = 1; btn.textContent = '정말 진도 초기화? 한 번 더 누르기'; return; }
-        const d = defaults(); S.pos = d.pos; S.done = {}; S.stickers = {}; S.weak = {}; S.stats = {}; S.challenge = {}; S.ladder = d.ladder; S.reviewPick = null;
+        const d = defaults(); S.pos = d.pos; S.done = {}; S.stickers = {}; S.weak = {}; S.stats = {}; S.challenge = {}; S.ladder = d.ladder; S.reviewPick = null; S.flashLv = 0; S.flashLvDate = '';
         save(); toast('진도를 처음으로 돌렸어요'); parentScreen();
       },
       setrung: () => { const v = +document.getElementById('rung').value; S.ladder.rung = v; S.ladder.streak = 0; save(); toast(`연산 사다리를 ${v + 1}칸으로 바꿨어요`); parentScreen(); },
+      setflash: () => { const v = +document.getElementById('flashLv').value; S.flashLv = v; S.flashLvDate = ''; save(); toast(`반짝 연산을 레벨 ${v + 1}로 바꿨어요`); parentScreen(); },
       star: a => { S.stars = Math.max(0, S.stars + Number(a)); S.goalBase = Math.min(S.goalBase, S.stars); save(); parentScreen(); },
       starset: () => { const v = parseInt(document.getElementById('starSet').value, 10); if (!(v >= 0)) return toast('0 이상의 숫자를 적어주세요'); S.stars = v; S.goalBase = Math.min(S.goalBase, S.stars); save(); toast(`별을 ${v}개로 맞췄어요`); parentScreen(); },
       delrw: (i, btn) => { if (!btn.dataset.sure) { btn.dataset.sure = 1; btn.textContent = '한 번 더 누르면 삭제'; return; } S.rewards.splice(+i, 1); save(); parentScreen(); },
@@ -1770,7 +1914,7 @@
   }
   try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {}); } catch (e) { /* */ }
   document.addEventListener('visibilitychange', () => { if (document.hidden) hush(); });
-  window.YUNI = { get state() { return S; }, get act() { return L && L.acts[L.i]; }, get lesson() { return L; }, get screen() { return screen; }, spoken, speakify, koSentences, sino, native, josa, parseCode, genProblem, makeCalc, rngFrom, KEY, APP_VERSION }; // 테스트용
+  window.YUNI = { get state() { return S; }, get act() { return L && L.acts[L.i]; }, get lesson() { return L; }, get screen() { return screen; }, get handlers() { return H; }, spoken, speakify, koSentences, sino, native, josa, parseCode, genProblem, makeCalc, rngFrom, KEY, APP_VERSION }; // 테스트용
   fixPos(); save();
   homeScreen();
   setTimeout(() => { if (!/^https?:/.test(location.protocol) || window.__SPEC_INLINE || navigator.onLine === false) return;

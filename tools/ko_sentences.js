@@ -35,6 +35,8 @@ const SEEDS = 400;
     // v0.5.0: 연산 연습·가르쳐주기(숫자 입력)
     ['연산 연습! 천천히 해도 돼요.', '연산 연습 끝! 정말 잘했어!', '연산 연습 끝! 끝까지 잘했어!', '어떤 연산을 연습할까?', '괜찮아! 같이 풀어 보자.'].forEach(addFixed);
     (C.drill ? C.drill.ops : []).forEach(o => addFixed(`${o.name}! 어떤 수로 할까?`));
+    // v0.6.0: 반짝 연산 여러 문제 한 화면(MREQ-41)·시계 바늘 놓기
+    if (C.flash) { addFixed('이번에는 조금 더 어려워요!'); addFixed(`${C.flash.per}문제 다 풀었어!`); addFixed(`${C.flash.per}문제 끝! 잘했어!`); L.praise.forEach(pr => addFixed(`${pr} ${C.flash.per}문제 다 풀었어!`)); }
     C.ladder.forEach((l, i) => addFixed(`지금 연산 사다리 ${i + 1}칸이에요.`));
     C.units.forEach(un => {
       addFixed(`${un.title} 단원은 아직 준비 중이에요.`); addFixed(`${un.title} 스티커! 정말 잘했어!`); addFixed(`${un.title} 마무리 도전에서 8개 넘게 맞히면 받을 수 있어요.`);
@@ -75,7 +77,9 @@ const SEEDS = 400;
       const n = it.n || 1;
       run(it.g, it.p, `${un.id}|${di}|${ii}`, d.challenge ? { eunhoo: false } : {}, n * 1.5); // 오늘의 단원 + 복습
     })));
-    C.ladder.forEach((l, rung) => run('calc', l.p, `ladder|${rung}`, { concrete: rung < 7, eunhoo: false }, 5 * (rung < 4 ? 2 : 1)));
+    C.ladder.forEach((l, rung) => run('calc', l.p, `ladder|${rung}`, { concrete: rung < 7, eunhoo: false }, 2));
+    // v0.6.0: 반짝 연산 레벨 (한 화면에서는 🔊를 눌러야 읽지만 힌트·정답은 읽어요) — 낮은 레벨일수록 자주
+    (C.flash ? C.flash.levels : []).forEach((l, i) => l.pool.forEach((p, j) => run('calc', p, `flash|${i}|${j}`, { concrete: false, eunhoo: false }, 6 * (i < 3 ? 2 : 1) / l.pool.length)));
     // v0.5.0: 연산 연습 (홈 → 🧮)
     (C.drill ? C.drill.ops : []).forEach(o => o.sizes.forEach(z => run('calc', z.p, `drill|${o.id}|${z.id}`, { concrete: false, eunhoo: false }, 3)));
     return { fixed: [...fixed], freq: [...freq.entries()] };

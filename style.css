@@ -367,3 +367,31 @@ textarea { min-height: 90px; font-family: ui-monospace, monospace; font-size: 13
 .expr.long { font-size: clamp(30px, 5vw, 50px); letter-spacing: 1px; }
 .items.coll { font-size: clamp(32px, 4.6vw, 44px); }
 .svgvis svg.ruler { width: min(100%, 480px); height: auto; }
+
+/* ---------- v0.6.0: 반짝 연산 여러 문제 한 화면 (MREQ-41) ---------- */
+.prompt.multi { width: 100%; }
+.mlist { display: grid; gap: 10px; width: 100%; max-width: 560px; }
+.mrow { display: grid; grid-template-columns: 44px 1fr 44px; align-items: center; gap: 8px; background: var(--card); border-radius: 20px; padding: 10px 14px; box-shadow: var(--shadow); border: 4px solid transparent; text-align: left; cursor: pointer; }
+.mrow.on { border-color: var(--primary); background: #f3fbf7; }
+.mrow.done { opacity: .85; }
+.mno { width: 40px; height: 40px; border-radius: 50%; background: var(--line); display: grid; place-items: center; font-weight: 900; font-size: 20px; }
+.mrow.on .mno { background: var(--primary); color: #fff; }
+.mexpr { font-size: clamp(30px, 4.6vw, 44px); font-weight: 900; letter-spacing: 1px; line-height: 1.15; white-space: nowrap; }
+.mans { min-width: 1.4em; font-size: inherit; }
+.mrow.on .mans { outline: 3px dashed var(--primary); }
+.mst { font-size: 28px; text-align: center; }
+.mhint { grid-column: 1 / -1; font-size: var(--fs-sm); padding: 8px 12px; max-width: none; }
+.mcur { font-weight: 900; font-size: var(--fs-md); color: var(--primary); min-height: 1.4em; }
+@media (max-width: 400px) { .mexpr { font-size: 26px; } .mrow { padding: 8px 10px; gap: 6px; grid-template-columns: 36px 1fr 36px; } .mno { width: 32px; height: 32px; font-size: 16px; } }
+
+/* ---------- v0.6.0: 시계 바늘 놓기 (MREQ-37) ---------- */
+.clockset { display: grid; gap: 12px; justify-items: center; width: 100%; }
+.setclock { touch-action: none; cursor: grab; max-width: min(100%, 300px); height: auto; -webkit-user-select: none; user-select: none; }
+.setclock .hand line { transition: none; }
+.cs-tools { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
+.hand-btn { opacity: .55; border: 3px solid transparent; }
+.hand-btn.on { opacity: 1; border-color: var(--primary); background: #f3fbf7; }
+.svgvis.clocks { display: flex; align-items: center; justify-content: center; gap: 8px; flex-wrap: nowrap; }
+.svgvis.clocks svg { width: min(42%, 180px); height: auto; }
+.svgvis.clocks .opm { font-size: 32px; font-weight: 900; }
+@media (max-width: 400px) { .prompt.multi .bubble { font-size: 19px; padding: 8px 12px; } .prompt.multi .bubble small { font-size: 13px; } .mlist { gap: 6px; } .prompt.multi .listen { width: 48px; height: 48px; font-size: 24px; } }
